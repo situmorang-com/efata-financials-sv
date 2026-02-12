@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { page } from '$app/stores';
+	import { browser } from '$app/environment';
 	import '../app.css';
 	import Toast from '$lib/components/Toast.svelte';
 	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
@@ -8,10 +9,16 @@
 	import Users from '@lucide/svelte/icons/users';
 	import Menu from '@lucide/svelte/icons/menu';
 	import X from '@lucide/svelte/icons/x';
+	import Sun from '@lucide/svelte/icons/sun';
+	import Moon from '@lucide/svelte/icons/moon';
 
 	let { children } = $props();
 	let pathname = $derived($page.url.pathname);
 	let mobileMenuOpen = $state(false);
+	let themePreference = $state<'dark' | 'light'>('dark');
+	let themeReady = $state(false);
+	let appliedTheme = $derived(themePreference);
+	let isLight = $derived(appliedTheme === 'light');
 
 	const navItems = [
 		{ href: '/', label: 'Dashboard', icon: LayoutDashboard },
@@ -24,10 +31,30 @@
 		return pathname.startsWith(href);
 	}
 
+	function setThemePreference(next: 'dark' | 'light') {
+		themePreference = next;
+	}
+
 	// Close mobile menu on navigation
 	$effect(() => {
 		pathname;
 		mobileMenuOpen = false;
+	});
+
+	$effect(() => {
+		if (!browser) return;
+		const saved = localStorage.getItem('theme-preference');
+		if (saved === 'dark' || saved === 'light') {
+			themePreference = saved;
+		}
+		themeReady = true;
+	});
+
+	$effect(() => {
+		if (!browser || !themeReady) return;
+		localStorage.setItem('theme-preference', themePreference);
+		const root = document.documentElement;
+		root.dataset.theme = appliedTheme;
 	});
 </script>
 
@@ -35,10 +62,10 @@
 	<title>EFATA Transfer Checklist</title>
 </svelte:head>
 
-<div class="min-h-screen relative overflow-hidden text-slate-100">
-	<div class="absolute inset-0 bg-gradient-to-br from-slate-950 via-slate-900 to-emerald-950"></div>
-	<div class="absolute inset-0 opacity-60 bg-[radial-gradient(circle_at_20%_10%,rgba(34,197,94,0.25),transparent_45%),radial-gradient(circle_at_80%_20%,rgba(56,189,248,0.25),transparent_40%),radial-gradient(circle_at_50%_90%,rgba(250,204,21,0.15),transparent_55%)]"></div>
-	<div class="absolute inset-0 opacity-20 bg-[linear-gradient(0deg,rgba(255,255,255,0.03)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.03)_1px,transparent_1px)] bg-[size:28px_28px]"></div>
+<div class="min-h-screen relative overflow-hidden {isLight ? 'text-slate-900' : 'text-slate-100'} theme-surface">
+	<div class="absolute inset-0 {isLight ? 'bg-gradient-to-br from-slate-100 via-slate-200 to-sky-100' : 'bg-gradient-to-br from-slate-950 via-slate-900 to-emerald-950'}"></div>
+	<div class="absolute inset-0 {isLight ? 'opacity-55 bg-[radial-gradient(circle_at_18%_8%,rgba(16,185,129,0.16),transparent_45%),radial-gradient(circle_at_80%_18%,rgba(14,165,233,0.18),transparent_40%),radial-gradient(circle_at_50%_92%,rgba(250,204,21,0.10),transparent_55%)]' : 'opacity-60 bg-[radial-gradient(circle_at_20%_10%,rgba(34,197,94,0.25),transparent_45%),radial-gradient(circle_at_80%_20%,rgba(56,189,248,0.25),transparent_40%),radial-gradient(circle_at_50%_90%,rgba(250,204,21,0.15),transparent_55%)]'}"></div>
+	<div class="absolute inset-0 {isLight ? 'opacity-25 bg-[linear-gradient(0deg,rgba(15,23,42,0.035)_1px,transparent_1px),linear-gradient(90deg,rgba(15,23,42,0.035)_1px,transparent_1px)]' : 'opacity-20 bg-[linear-gradient(0deg,rgba(255,255,255,0.03)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.03)_1px,transparent_1px)]'} bg-[size:28px_28px]"></div>
 
 	<nav class="relative z-20">
 		<div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -48,7 +75,28 @@
 					<span class="glow-text">EFATA Transfer</span>
 				</a>
 				<!-- Desktop nav -->
-				<div class="hidden sm:flex items-center gap-1 glass-dark rounded-full px-2 py-1">
+				<div class="hidden sm:flex items-center gap-1">
+					<div class="flex items-center gap-1 glass-dark rounded-full px-2 py-1">
+						<button
+							type="button"
+							onclick={() => setThemePreference('light')}
+							class="nav-pill flex items-center gap-1.5 {themePreference === 'light' ? 'nav-pill-active' : ''}"
+							title="Light theme"
+						>
+							<Sun class="w-3.5 h-3.5" />
+							Light
+						</button>
+						<button
+							type="button"
+							onclick={() => setThemePreference('dark')}
+							class="nav-pill flex items-center gap-1.5 {themePreference === 'dark' ? 'nav-pill-active' : ''}"
+							title="Dark theme"
+						>
+							<Moon class="w-3.5 h-3.5" />
+							Dark
+						</button>
+					</div>
+					<div class="flex items-center gap-1 glass-dark rounded-full px-2 py-1">
 					{#each navItems as item}
 						<a
 							href={item.href}
@@ -58,6 +106,7 @@
 							{item.label}
 						</a>
 					{/each}
+					</div>
 				</div>
 				<!-- Mobile hamburger -->
 				<button
@@ -94,6 +143,25 @@
 					</button>
 				</div>
 				<div class="flex flex-col gap-1 px-3 mt-2">
+					<div class="glass rounded-xl p-2 mb-1">
+						<p class="text-[10px] uppercase tracking-widest text-white/40 px-2 pb-2">Theme</p>
+						<div class="grid grid-cols-2 gap-1">
+							<button
+								type="button"
+								onclick={() => setThemePreference('light')}
+								class="nav-pill text-xs {themePreference === 'light' ? 'nav-pill-active' : ''}"
+							>
+								Light
+							</button>
+							<button
+								type="button"
+								onclick={() => setThemePreference('dark')}
+								class="nav-pill text-xs {themePreference === 'dark' ? 'nav-pill-active' : ''}"
+							>
+								Dark
+							</button>
+						</div>
+					</div>
 					{#each navItems as item}
 						<a
 							href={item.href}

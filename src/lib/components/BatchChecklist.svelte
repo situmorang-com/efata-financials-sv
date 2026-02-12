@@ -35,6 +35,7 @@
 	let completing = $state(false);
 	let autoSkipping = $state(false);
 	let downloading = $state(false);
+	let isSpecial = $derived(batch?.type === 'special');
 
 	let transferredCount = $derived(items.filter(i => i.transfer_status === 'done').length);
 	let notifiedCount = $derived(items.filter(i => i.notify_status === 'sent').length);
@@ -166,6 +167,23 @@
 		}
 	}
 
+	async function updateAmount(item: BatchItem, newAmount: number) {
+		const sanitized = Math.max(0, Math.round(newAmount || 0));
+		const oldAmount = item.amount;
+		item.amount = sanitized;
+		try {
+			await fetch(`/api/batches/${batchId}/items/${item.id}`, {
+				method: 'PUT',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ amount: sanitized })
+			});
+		} catch (e) {
+			item.amount = oldAmount;
+			console.error('Failed to update amount:', e);
+			addToast('Gagal mengubah nominal', 'error');
+		}
+	}
+
 	function handleTransferChange(item: BatchItem, newStatus: 'pending' | 'done', hasProofNow: boolean) {
 		item.transfer_status = newStatus;
 		item.has_transfer_proof = hasProofNow ? 1 : 0;
@@ -268,6 +286,7 @@
 
 	async function setAllFullAttendance() {
 		if (!batch) return;
+		if (batch.type === 'special') return;
 		try {
 			await fetch(`/api/batches/${batchId}/bulk-saturdays`, {
 				method: 'POST',
@@ -307,6 +326,15 @@
 		return item.zoom_type === 'single' ? batch.zoom_single_rate : item.zoom_type === 'family' ? batch.zoom_family_rate : 0;
 	}
 
+	function formatCurrencyInput(value: number): string {
+		return `Rp. ${Math.max(0, Math.round(value || 0)).toLocaleString('id-ID')}`;
+	}
+
+	function parseCurrencyInput(value: string): number {
+		const digits = value.replace(/\D/g, '');
+		return digits ? Number(digits) : 0;
+	}
+
 	function getProofUrl(item: BatchItem): string | undefined {
 		if (!item.has_transfer_proof) return undefined;
 		// Use current origin so the link works when shared
@@ -341,14 +369,21 @@
 						<p class="text-white/60 text-sm mt-1">{batch.description}</p>
 					{/if}
 					<div class="flex items-center gap-3 text-white/40 text-xs mt-1 flex-wrap">
-						<span class="flex items-center gap-1">
-							<Banknote class="w-3 h-3" />
-							{formatRupiah(batch.transport_rate)}/Sabat
-						</span>
-						<span class="flex items-center gap-1">
-							<CalendarDays class="w-3 h-3" />
-							{batch.total_saturdays} Sabat bulan ini
-						</span>
+						{#if isSpecial}
+							<span class="flex items-center gap-1">
+								<Banknote class="w-3 h-3" />
+								{formatRupiah(batch.default_amount)} per orang
+							</span>
+						{:else}
+							<span class="flex items-center gap-1">
+								<Banknote class="w-3 h-3" />
+								{formatRupiah(batch.transport_rate)}/Sabat
+							</span>
+							<span class="flex items-center gap-1">
+								<CalendarDays class="w-3 h-3" />
+								{batch.total_saturdays} Sabat bulan ini
+							</span>
+						{/if}
 					</div>
 				</div>
 				<div class="flex gap-2 flex-wrap">
@@ -370,14 +405,16 @@
 						<Download class="w-4 h-4" />
 						{downloading ? 'Membuat PDF...' : 'Unduh PDF'}
 					</button>
-					<button
-						onclick={setAllFullAttendance}
-						class="glass-button rounded-full px-3 py-2 text-white text-sm border border-emerald-500/20 flex items-center gap-1.5
-							bg-emerald-500/10 hover:bg-emerald-500/25"
-					>
-						<CalendarDays class="w-4 h-4" />
-						Hadir Penuh
-					</button>
+					{#if !isSpecial}
+						<button
+							onclick={setAllFullAttendance}
+							class="glass-button rounded-full px-3 py-2 text-white text-sm border border-emerald-500/20 flex items-center gap-1.5
+								bg-emerald-500/10 hover:bg-emerald-500/25"
+						>
+							<CalendarDays class="w-4 h-4" />
+							Hadir Penuh
+						</button>
+					{/if}
 					<button
 						onclick={markAllTransferred}
 						disabled={pendingTransferCount === 0}
@@ -402,11 +439,21 @@
 				</div>
 				<div class="glass-card rounded-2xl p-4 lift-on-hover">
 					<div class="flex items-center gap-2 mb-1">
-						<CalendarDays class="w-3.5 h-3.5 text-emerald-400/70" />
-						<p class="text-white/60 text-xs uppercase tracking-wider">Kehadiran</p>
+						{#if isSpecial}
+							<Banknote class="w-3.5 h-3.5 text-emerald-400/70" />
+							<p class="text-white/60 text-xs uppercase tracking-wider">Per Orang</p>
+						{:else}
+							<CalendarDays class="w-3.5 h-3.5 text-emerald-400/70" />
+							<p class="text-white/60 text-xs uppercase tracking-wider">Kehadiran</p>
+						{/if}
 					</div>
-					<p class="text-2xl font-bold text-white mt-1">{avgAttendance}<span class="text-sm text-white/40">/{batch.total_saturdays}</span></p>
-					<p class="text-white/50 text-xs mt-1">Rata-rata Sabat</p>
+					{#if isSpecial}
+						<p class="text-2xl font-bold text-white mt-1">{formatRupiah(batch.default_amount)}</p>
+						<p class="text-white/50 text-xs mt-1">Nominal tetap</p>
+					{:else}
+						<p class="text-2xl font-bold text-white mt-1">{avgAttendance}<span class="text-sm text-white/40">/{batch.total_saturdays}</span></p>
+						<p class="text-white/50 text-xs mt-1">Rata-rata Sabat</p>
+					{/if}
 				</div>
 				<div class="glass-card rounded-2xl p-4 lift-on-hover">
 					<div class="flex items-center gap-2 mb-2">
@@ -478,8 +525,10 @@
 								<th class="text-left px-3 py-3 table-head-cell w-8">#</th>
 								<th class="text-left px-3 py-3 table-head-cell">Penerima</th>
 								<th class="text-left px-3 py-3 table-head-cell">Rek. Tujuan</th>
-								<th class="text-center px-3 py-3 table-head-cell">Sabat</th>
-								<th class="text-center px-3 py-3 table-head-cell">Zoom</th>
+								{#if !isSpecial}
+									<th class="text-center px-3 py-3 table-head-cell">Sabat</th>
+									<th class="text-center px-3 py-3 table-head-cell">Zoom</th>
+								{/if}
 								<th class="text-right px-3 py-3 table-head-cell">Total</th>
 								<th class="text-left px-3 py-3 table-head-cell">Tgl TF</th>
 								<th class="text-center px-3 py-3 table-head-cell w-12">TF</th>
@@ -510,25 +559,42 @@
 											<span class="text-white/30 text-xs">-</span>
 										{/if}
 									</td>
-									<td class="px-3 py-2.5">
-										<SaturdayDots
-											total={batch.total_saturdays}
-											attended={item.saturdays_attended}
-											onchange={(n) => updateSaturdays(item, n)}
-										/>
-									</td>
-									<td class="px-3 py-2.5 text-center">
-										<ZoomBadge
-											zoomType={item.zoom_type}
-											singleRate={batch.zoom_single_rate}
-											familyRate={batch.zoom_family_rate}
-											onchange={(t) => updateZoomType(item, t)}
-										/>
-									</td>
+									{#if !isSpecial}
+										<td class="px-3 py-2.5">
+											<SaturdayDots
+												total={batch.total_saturdays}
+												attended={item.saturdays_attended}
+												onchange={(n) => updateSaturdays(item, n)}
+											/>
+										</td>
+										<td class="px-3 py-2.5 text-center">
+											<ZoomBadge
+												zoomType={item.zoom_type}
+												singleRate={batch.zoom_single_rate}
+												familyRate={batch.zoom_family_rate}
+												onchange={(t) => updateZoomType(item, t)}
+											/>
+										</td>
+									{/if}
 									<td class="px-3 py-2.5 text-right">
-										<span class="text-white/80 text-sm font-mono font-medium">
-											{formatRupiah(item.amount)}
-										</span>
+										{#if isSpecial}
+											<input
+												type="text"
+												inputmode="numeric"
+												class="glass-input rounded-lg px-2 py-1 text-xs text-white/90 w-[128px] text-right"
+												value={formatCurrencyInput(item.amount)}
+												onfocus={(e) => { (e.target as HTMLInputElement).value = String(item.amount || 0); }}
+												onblur={(e) => {
+													const parsed = parseCurrencyInput((e.target as HTMLInputElement).value);
+													updateAmount(item, parsed);
+													(e.target as HTMLInputElement).value = formatCurrencyInput(parsed);
+												}}
+											/>
+										{:else}
+											<span class="text-white/80 text-sm font-mono font-medium">
+												{formatRupiah(item.amount)}
+											</span>
+										{/if}
 									</td>
 									<td class="px-3 py-2.5">
 										{#if item.transfer_status === 'done'}
@@ -558,7 +624,7 @@
 											name={item.recipient_name || ''}
 											amount={item.amount}
 											disabled={item.transfer_status !== 'done'}
-											details={{
+											details={isSpecial ? undefined : {
 												saturdays_attended: item.saturdays_attended,
 												transport_rate: batch.transport_rate,
 												zoom_type: item.zoom_type,
@@ -603,30 +669,47 @@
 								</div>
 							</div>
 							<div class="text-right flex-shrink-0">
-								<span class="text-white font-bold text-sm font-mono">{formatRupiah(item.amount)}</span>
+								{#if isSpecial}
+									<input
+										type="text"
+										inputmode="numeric"
+										class="glass-input rounded-lg px-2 py-1 text-xs text-white/90 w-[120px] text-right"
+										value={formatCurrencyInput(item.amount)}
+										onfocus={(e) => { (e.target as HTMLInputElement).value = String(item.amount || 0); }}
+										onblur={(e) => {
+											const parsed = parseCurrencyInput((e.target as HTMLInputElement).value);
+											updateAmount(item, parsed);
+											(e.target as HTMLInputElement).value = formatCurrencyInput(parsed);
+										}}
+									/>
+								{:else}
+									<span class="text-white font-bold text-sm font-mono">{formatRupiah(item.amount)}</span>
+								{/if}
 							</div>
 						</div>
 
-						<!-- Saturday + Zoom controls -->
-						<div class="mt-3 pt-3 border-t border-white/[0.06] space-y-2">
-							<div class="flex items-center justify-between">
-								<span class="text-white/40 text-xs w-12">Sabat</span>
-								<SaturdayDots
-									total={batch.total_saturdays}
-									attended={item.saturdays_attended}
-									onchange={(n) => updateSaturdays(item, n)}
-								/>
+						{#if !isSpecial}
+							<!-- Saturday + Zoom controls -->
+							<div class="mt-3 pt-3 border-t border-white/[0.06] space-y-2">
+								<div class="flex items-center justify-between">
+									<span class="text-white/40 text-xs w-12">Sabat</span>
+									<SaturdayDots
+										total={batch.total_saturdays}
+										attended={item.saturdays_attended}
+										onchange={(n) => updateSaturdays(item, n)}
+									/>
+								</div>
+								<div class="flex items-center justify-between">
+									<span class="text-white/40 text-xs w-12">Zoom</span>
+									<ZoomBadge
+										zoomType={item.zoom_type}
+										singleRate={batch.zoom_single_rate}
+										familyRate={batch.zoom_family_rate}
+										onchange={(t) => updateZoomType(item, t)}
+									/>
+								</div>
 							</div>
-							<div class="flex items-center justify-between">
-								<span class="text-white/40 text-xs w-12">Zoom</span>
-								<ZoomBadge
-									zoomType={item.zoom_type}
-									singleRate={batch.zoom_single_rate}
-									familyRate={batch.zoom_family_rate}
-									onchange={(t) => updateZoomType(item, t)}
-								/>
-							</div>
-						</div>
+						{/if}
 
 						<!-- Actions -->
 						<div class="flex items-center gap-2 mt-3 pt-3 border-t border-white/[0.06]">
@@ -652,7 +735,7 @@
 									name={item.recipient_name || ''}
 									amount={item.amount}
 									disabled={item.transfer_status !== 'done'}
-									details={{
+									details={isSpecial ? undefined : {
 										saturdays_attended: item.saturdays_attended,
 										transport_rate: batch.transport_rate,
 										zoom_type: item.zoom_type,

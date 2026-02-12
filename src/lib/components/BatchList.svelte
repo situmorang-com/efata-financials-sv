@@ -21,6 +21,7 @@
 	let batches = $state<Batch[]>([]);
 	let loading = $state(true);
 	let showForm = $state(false);
+	let createMode = $state<'monthly' | 'special'>('monthly');
 	let formData = $state({
 		name: '',
 		description: 'Transport & Zoom',
@@ -28,6 +29,11 @@
 		transport_rate: 25000,
 		zoom_single_rate: 50000,
 		zoom_family_rate: 30000
+	});
+	let specialFormData = $state({
+		name: '',
+		description: 'Batch Spesial',
+		amount: 100000
 	});
 	let selectedMonth = $state((new Date().getMonth() + 11) % 12);
 	let selectedYear = $state(new Date().getFullYear());
@@ -37,7 +43,7 @@
 	];
 	const years = Array.from({ length: 6 }, (_, i) => new Date().getFullYear() - 1 + i);
 	let statusFilter = $state<'all' | 'active' | 'done'>('all');
-	let attendanceMap = $state<Record<number, { avg: number; total: number }>>({});
+	let attendanceMap = $state<Record<number, { avg: number; total: number; totalAmount: number }>>({});
 
 	let filteredBatches = $derived(
 		statusFilter === 'all'
@@ -50,6 +56,15 @@
 	// Live calculation preview
 	let previewFullAttendance = $derived(formData.total_saturdays * formData.transport_rate + formData.zoom_single_rate);
 	let previewFamilyFull = $derived(formData.total_saturdays * formData.transport_rate + formData.zoom_family_rate);
+
+	function formatCurrencyInput(value: number): string {
+		return `Rp. ${Math.max(0, Math.round(value || 0)).toLocaleString('id-ID')}`;
+	}
+
+	function parseCurrencyInput(value: string): number {
+		const digits = value.replace(/\D/g, '');
+		return digits ? Number(digits) : 0;
+	}
 
 	async function loadBatches() {
 		try {
@@ -66,16 +81,17 @@
 							const avg = total > 0
 								? items.reduce((sum, item) => sum + (item.saturdays_attended || 0), 0) / total
 								: 0;
-							return { id: b.id!, total, avg };
+							const totalAmount = items.reduce((sum, item) => sum + (item.amount || 0), 0);
+							return { id: b.id!, total, avg, totalAmount };
 						} catch {
-							return { id: b.id!, total: 0, avg: 0 };
+							return { id: b.id!, total: 0, avg: 0, totalAmount: 0 };
 						}
 					})
 			);
 			attendanceMap = details.reduce((acc, item) => {
-				acc[item.id] = { avg: item.avg, total: item.total };
+				acc[item.id] = { avg: item.avg, total: item.total, totalAmount: item.totalAmount };
 				return acc;
-			}, {} as Record<number, { avg: number; total: number }>);
+			}, {} as Record<number, { avg: number; total: number; totalAmount: number }>);
 		} catch (e) {
 			console.error('Failed to load batches:', e);
 		} finally {
@@ -84,13 +100,34 @@
 	}
 
 	async function createBatch() {
-		formData.name = `Transfer ${months[selectedMonth]} ${selectedYear}`;
-		formData.description = 'Transport & Zoom';
 		try {
+			let payload: Record<string, unknown>;
+			if (createMode === 'special') {
+				if (!specialFormData.name.trim()) {
+					addToast('Nama batch spesial wajib diisi', 'error');
+					return;
+				}
+				payload = {
+					type: 'special',
+					name: specialFormData.name.trim(),
+					description: specialFormData.description?.trim() || 'Batch Spesial',
+					default_amount: Number(specialFormData.amount) || 0
+				};
+			} else {
+				payload = {
+					type: 'monthly',
+					name: `Transfer ${months[selectedMonth]} ${selectedYear}`,
+					description: 'Transport & Zoom',
+					total_saturdays: formData.total_saturdays,
+					transport_rate: formData.transport_rate,
+					zoom_single_rate: formData.zoom_single_rate,
+					zoom_family_rate: formData.zoom_family_rate
+				};
+			}
 			const res = await fetch('/api/batches', {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify(formData)
+				body: JSON.stringify(payload)
 			});
 			const batch = await res.json();
 			await fetch(`/api/batches/${batch.id}/populate`, {
@@ -99,6 +136,7 @@
 			});
 			showForm = false;
 			formData = { name: '', description: 'Transport & Zoom', total_saturdays: 4, transport_rate: 25000, zoom_single_rate: 50000, zoom_family_rate: 30000 };
+			specialFormData = { name: '', description: 'Batch Spesial', amount: 100000 };
 			addToast('Batch berhasil dibuat', 'success');
 			window.location.href = `/batches/${batch.id}`;
 		} catch (e) {
@@ -193,8 +231,14 @@
 			<div class="p-5 sm:p-6">
 				<div class="flex items-center justify-between mb-4">
 					<div>
-						<h2 class="text-lg font-semibold text-white brand-font">Buat Batch Baru Transport & Zoom Bulanan</h2>
-						<p class="text-white/50 text-sm mt-0.5">Konfigurasi transfer bulanan.</p>
+						<h2 class="text-lg font-semibold text-white brand-font">
+							{createMode === 'monthly' ? 'Buat Batch Baru Transport & Zoom Bulanan' : 'Buat Batch Spesial'}
+						</h2>
+						<p class="text-white/50 text-sm mt-0.5">
+							{createMode === 'monthly'
+								? 'Konfigurasi transfer bulanan.'
+								: 'Batch sederhana dengan nominal tetap untuk semua penerima.'}
+						</p>
 					</div>
 					<button onclick={() => { showForm = false; }} class="text-white/40 hover:text-white/70 transition-colors rounded-lg p-1.5 hover:bg-white/5">
 						<X class="w-4 h-4" />
@@ -202,97 +246,172 @@
 				</div>
 
 				<form onsubmit={(e) => { e.preventDefault(); createBatch(); }} class="space-y-4">
-					<!-- Basic Info — single row on desktop -->
-					<div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-						<div>
-							<label class="block text-white/70 text-xs uppercase tracking-wider mb-1.5">Bulan</label>
-							<select
-								bind:value={selectedMonth}
-								class="w-full glass-input rounded-xl px-4 py-2.5 text-white text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/30"
-							>
-								{#each months as m, i}
-									<option value={i}>{m}</option>
-								{/each}
-							</select>
-						</div>
-						<div>
-							<label class="block text-white/70 text-xs uppercase tracking-wider mb-1.5">Tahun</label>
-							<select
-								bind:value={selectedYear}
-								class="w-full glass-input rounded-xl px-4 py-2.5 text-white text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/30"
-							>
-								{#each years as y}
-									<option value={y}>{y}</option>
-								{/each}
-							</select>
-						</div>
+					<div class="flex items-center gap-1 glass-dark rounded-full px-2 py-1 w-fit">
+						<button
+							type="button"
+							onclick={() => { createMode = 'monthly'; }}
+							class="nav-pill {createMode === 'monthly' ? 'nav-pill-active' : ''}"
+						>
+							Bulanan
+						</button>
+						<button
+							type="button"
+							onclick={() => { createMode = 'special'; }}
+							class="nav-pill {createMode === 'special' ? 'nav-pill-active' : ''}"
+						>
+							Spesial
+						</button>
 					</div>
 
-					<!-- Config — all 4 fields in one row on desktop -->
-					<div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
-						<div>
-							<label class="block text-white/50 text-xs mb-1">
-								<span class="text-emerald-400">●</span> Jumlah Sabat
-							</label>
-							<input
-								type="number"
-								bind:value={formData.total_saturdays}
-								min="1"
-								max="5"
-								class="w-full glass-input rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/30"
-							/>
+					{#if createMode === 'monthly'}
+						<!-- Basic Info — single row on desktop -->
+						<div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+							<div>
+								<label class="block text-white/70 text-xs uppercase tracking-wider mb-1.5">Bulan</label>
+								<select
+									bind:value={selectedMonth}
+									class="w-full glass-input rounded-xl px-4 py-2.5 text-white text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/30"
+								>
+									{#each months as m, i}
+										<option value={i}>{m}</option>
+									{/each}
+								</select>
+							</div>
+							<div>
+								<label class="block text-white/70 text-xs uppercase tracking-wider mb-1.5">Tahun</label>
+								<select
+									bind:value={selectedYear}
+									class="w-full glass-input rounded-xl px-4 py-2.5 text-white text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/30"
+								>
+									{#each years as y}
+										<option value={y}>{y}</option>
+									{/each}
+								</select>
+							</div>
 						</div>
-						<div>
-							<label class="block text-white/50 text-xs mb-1">
-								<span class="text-emerald-400">●</span> Rate/Sabat
-							</label>
-							<input
-								type="number"
-								bind:value={formData.transport_rate}
-								step="1000"
-								class="w-full glass-input rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/30"
-							/>
-						</div>
-						<div>
-							<label class="block text-white/50 text-xs mb-1">
-								<span class="text-violet-400">●</span> Zoom Sendiri
-							</label>
-							<input
-								type="number"
-								bind:value={formData.zoom_single_rate}
-								step="1000"
-								class="w-full glass-input rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:ring-2 focus:ring-violet-500/30"
-							/>
-						</div>
-						<div>
-							<label class="block text-white/50 text-xs mb-1">
-								<span class="text-amber-400">●</span> Zoom Keluarga
-							</label>
-							<input
-								type="number"
-								bind:value={formData.zoom_family_rate}
-								step="1000"
-								class="w-full glass-input rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/30"
-							/>
-						</div>
-					</div>
 
-					<!-- Preview + Actions in one row -->
-					<div class="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 pt-2 border-t border-white/5">
+						<!-- Config — all 4 fields in one row on desktop -->
+						<div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+							<div>
+								<label class="block text-white/50 text-xs mb-1">
+									<span class="text-emerald-400">●</span> Jumlah Sabat
+								</label>
+								<input
+									type="number"
+									bind:value={formData.total_saturdays}
+									min="1"
+									max="5"
+									class="w-full glass-input rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/30"
+								/>
+							</div>
+							<div>
+								<label class="block text-white/50 text-xs mb-1">
+									<span class="text-emerald-400">●</span> Rate/Sabat
+								</label>
+								<input
+									type="text"
+									inputmode="numeric"
+									value={formatCurrencyInput(formData.transport_rate)}
+									onfocus={(e) => { (e.target as HTMLInputElement).value = String(formData.transport_rate || 0); }}
+									onblur={(e) => {
+										const parsed = parseCurrencyInput((e.target as HTMLInputElement).value);
+										formData.transport_rate = parsed;
+										(e.target as HTMLInputElement).value = formatCurrencyInput(parsed);
+									}}
+									class="w-full glass-input rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/30"
+								/>
+							</div>
+							<div>
+								<label class="block text-white/50 text-xs mb-1">
+									<span class="text-violet-400">●</span> Zoom Sendiri
+								</label>
+								<input
+									type="text"
+									inputmode="numeric"
+									value={formatCurrencyInput(formData.zoom_single_rate)}
+									onfocus={(e) => { (e.target as HTMLInputElement).value = String(formData.zoom_single_rate || 0); }}
+									onblur={(e) => {
+										const parsed = parseCurrencyInput((e.target as HTMLInputElement).value);
+										formData.zoom_single_rate = parsed;
+										(e.target as HTMLInputElement).value = formatCurrencyInput(parsed);
+									}}
+									class="w-full glass-input rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:ring-2 focus:ring-violet-500/30"
+								/>
+							</div>
+							<div>
+								<label class="block text-white/50 text-xs mb-1">
+									<span class="text-amber-400">●</span> Zoom Keluarga
+								</label>
+								<input
+									type="text"
+									inputmode="numeric"
+									value={formatCurrencyInput(formData.zoom_family_rate)}
+									onfocus={(e) => { (e.target as HTMLInputElement).value = String(formData.zoom_family_rate || 0); }}
+									onblur={(e) => {
+										const parsed = parseCurrencyInput((e.target as HTMLInputElement).value);
+										formData.zoom_family_rate = parsed;
+										(e.target as HTMLInputElement).value = formatCurrencyInput(parsed);
+									}}
+									class="w-full glass-input rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/30"
+								/>
+							</div>
+						</div>
+
 						<div class="flex flex-wrap gap-x-5 gap-y-1 text-xs text-white/50">
 							<span>Full + Zoom sendiri: <span class="text-emerald-300 font-medium">{formatRupiah(previewFullAttendance)}</span></span>
 							<span>Full + Zoom keluarga: <span class="text-amber-300 font-medium">{formatRupiah(previewFamilyFull)}</span></span>
 							<span>Full, tanpa zoom: <span class="text-white/70 font-medium">{formatRupiah(formData.total_saturdays * formData.transport_rate)}</span></span>
 						</div>
-						<div class="flex gap-3 shrink-0">
-							<button type="button" onclick={() => { showForm = false; }} class="glass-button rounded-xl px-4 py-2.5 text-white/80 text-sm">
-								Batal
-							</button>
-							<button type="submit" class="glass-button rounded-xl px-5 py-2.5 text-white text-sm font-semibold bg-emerald-500/25 hover:bg-emerald-500/40 flex items-center gap-1.5">
-								<Plus class="w-4 h-4" />
-								Buat & Isi Penerima
-							</button>
+					{:else}
+						<div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+							<div>
+								<label class="block text-white/70 text-xs uppercase tracking-wider mb-1.5">Nama Batch</label>
+								<input
+									type="text"
+									bind:value={specialFormData.name}
+									placeholder="Contoh: Bonus Pelayanan Maret 2026"
+									class="w-full glass-input rounded-xl px-4 py-2.5 text-white text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/30"
+								/>
+							</div>
+							<div>
+								<label class="block text-white/70 text-xs uppercase tracking-wider mb-1.5">Nominal Per Orang</label>
+								<input
+									type="text"
+									inputmode="numeric"
+									value={formatCurrencyInput(specialFormData.amount)}
+									onfocus={(e) => { (e.target as HTMLInputElement).value = String(specialFormData.amount || 0); }}
+									onblur={(e) => {
+										const parsed = parseCurrencyInput((e.target as HTMLInputElement).value);
+										specialFormData.amount = parsed;
+										(e.target as HTMLInputElement).value = formatCurrencyInput(parsed);
+									}}
+									class="w-full glass-input rounded-xl px-4 py-2.5 text-white text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/30"
+								/>
+							</div>
 						</div>
+						<div>
+							<label class="block text-white/70 text-xs uppercase tracking-wider mb-1.5">Deskripsi</label>
+							<input
+								type="text"
+								bind:value={specialFormData.description}
+								placeholder="Keterangan batch spesial"
+								class="w-full glass-input rounded-xl px-4 py-2.5 text-white text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/30"
+							/>
+						</div>
+						<p class="text-xs text-white/50">
+							Nominal tetap untuk semua penerima: <span class="text-emerald-300 font-medium">{formatRupiah(specialFormData.amount || 0)}</span>
+						</p>
+					{/if}
+
+					<!-- Actions -->
+					<div class="flex flex-col sm:flex-row items-start sm:items-center justify-end gap-3 pt-2 border-t border-white/5">
+						<button type="button" onclick={() => { showForm = false; }} class="glass-button rounded-xl px-4 py-2.5 text-white/80 text-sm">
+							Batal
+						</button>
+						<button type="submit" class="glass-button rounded-xl px-5 py-2.5 text-white text-sm font-semibold bg-emerald-500/25 hover:bg-emerald-500/40 flex items-center gap-1.5">
+							<Plus class="w-4 h-4" />
+							Buat & Isi Penerima
+						</button>
 					</div>
 				</form>
 			</div>
@@ -320,7 +439,7 @@
 				{@const total = b.total_items || 0}
 				{@const attendance = b.id ? attendanceMap[b.id] : undefined}
 				{@const recipientTotal = total || attendance?.total || 0}
-				{@const totalRupiah = recipientTotal * (b.transport_rate * b.total_saturdays + b.zoom_single_rate)}
+				{@const totalRupiah = attendance?.totalAmount || 0}
 				{@const avgAttendance = attendance?.avg || 0}
 				{@const transferred = b.transferred_count || 0}
 				{@const notified = b.notified_count || 0}
@@ -337,6 +456,9 @@
 									{/if}
 									{b.status === 'active' ? 'Aktif' : 'Selesai'}
 								</span>
+								<span class="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full border border-white/20 bg-white/10 text-white/70">
+									{b.type === 'special' ? 'Spesial' : 'Bulanan'}
+								</span>
 							</div>
 							{#if b.description}
 								<p class="text-white/50 text-sm mt-0.5 truncate">{b.description}</p>
@@ -346,13 +468,20 @@
 									<Calendar class="w-3 h-3" />
 									{formatDate(b.created_at)}
 								</span>
-								<span class="inline-flex items-center gap-1">
-									<Banknote class="w-3 h-3" />
-									{formatRupiah(b.transport_rate)}/Sabat
-								</span>
-								<span class="inline-flex items-center gap-1 text-white/30">
-									{b.total_saturdays} Sabat
-								</span>
+								{#if b.type === 'special'}
+									<span class="inline-flex items-center gap-1">
+										<Banknote class="w-3 h-3" />
+										{formatRupiah(b.default_amount)} per orang
+									</span>
+								{:else}
+									<span class="inline-flex items-center gap-1">
+										<Banknote class="w-3 h-3" />
+										{formatRupiah(b.transport_rate)}/Sabat
+									</span>
+									<span class="inline-flex items-center gap-1 text-white/30">
+										{b.total_saturdays} Sabat
+									</span>
+								{/if}
 							</p>
 						</div>
 						<div class="flex items-center gap-3 text-sm lg:shrink-0">
@@ -390,12 +519,19 @@
 							<span class="text-white/50 uppercase tracking-widest text-[10px]">Total Rupiah</span>
 							<span class="text-emerald-200 font-semibold ml-2">{formatRupiah(totalRupiah)}</span>
 						</div>
-						<div class="glass rounded-full px-3 py-1.5 text-white/70">
-							<span class="text-white/50 uppercase tracking-widest text-[10px]">Rata-rata Sabat</span>
-							<span class="text-white font-semibold ml-2">
-								{avgAttendance ? avgAttendance.toFixed(1) : '0.0'}/{b.total_saturdays}
-							</span>
-						</div>
+						{#if b.type === 'special'}
+							<div class="glass rounded-full px-3 py-1.5 text-white/70">
+								<span class="text-white/50 uppercase tracking-widest text-[10px]">Per Orang</span>
+								<span class="text-white font-semibold ml-2">{formatRupiah(b.default_amount)}</span>
+							</div>
+						{:else}
+							<div class="glass rounded-full px-3 py-1.5 text-white/70">
+								<span class="text-white/50 uppercase tracking-widest text-[10px]">Rata-rata Sabat</span>
+								<span class="text-white font-semibold ml-2">
+									{avgAttendance ? avgAttendance.toFixed(1) : '0.0'}/{b.total_saturdays}
+								</span>
+							</div>
+						{/if}
 					</div>
 				</a>
 			{/each}

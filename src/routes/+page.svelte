@@ -66,8 +66,19 @@
 			<div class="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-5">
 				<div>
 					<p class="text-white/50 text-xs uppercase tracking-wider">Batch Aktif</p>
-					<h2 class="text-xl font-bold text-white mt-1 brand-font">{activeBatch.name}</h2>
-					<p class="text-white/50 text-sm mt-0.5">{formatDate(activeBatch.created_at)} &middot; {formatRupiah(activeBatch.default_amount)} per orang</p>
+					<div class="flex items-center gap-2 mt-1">
+						<h2 class="text-xl font-bold text-white brand-font">{activeBatch.name}</h2>
+						<span class="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full border border-white/20 bg-white/10 text-white/70">
+							{activeBatch.type === 'special' ? 'Spesial' : 'Bulanan'}
+						</span>
+					</div>
+					<p class="text-white/50 text-sm mt-0.5">
+						{formatDate(activeBatch.created_at)}
+						&middot;
+						{activeBatch.type === 'special'
+							? `${formatRupiah(activeBatch.default_amount)} per orang`
+							: `${formatRupiah(activeBatch.transport_rate)}/Sabat`}
+					</p>
 				</div>
 				<a
 					href="/batches/{activeBatch.id}"
