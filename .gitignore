@@ -1,6 +1,25 @@
-node_modules
-.svelte-kit
-build
+# Node
+node_modules/
+
+# Build
+.svelte-kit/
+build/
+
+# Env
 .env
+.env.*
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+
+# Mac
+.DS_Store
+
+# SQLite
 *.db
-data/proofs/
+*.db-*
+
+# Local data
+/data/
