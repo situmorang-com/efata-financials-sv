@@ -100,6 +100,7 @@ db.exec(`
     batch_id INTEGER NOT NULL,
     recipient_id INTEGER NOT NULL,
     amount INTEGER NOT NULL DEFAULT 0,
+    payment_method TEXT NOT NULL DEFAULT 'transfer',
     saturdays_attended INTEGER NOT NULL DEFAULT 0,
     zoom_type TEXT NOT NULL DEFAULT 'none',
     transfer_status TEXT NOT NULL DEFAULT 'pending',
@@ -292,6 +293,11 @@ if (!columnExists("batch_items", "transfer_fee")) {
     "ALTER TABLE batch_items ADD COLUMN transfer_fee INTEGER NOT NULL DEFAULT 0",
   );
 }
+if (!columnExists("batch_items", "payment_method")) {
+  db.exec(
+    "ALTER TABLE batch_items ADD COLUMN payment_method TEXT NOT NULL DEFAULT 'transfer'",
+  );
+}
 
 // --- Prepared statements - Recipients ---
 const insertRecipient = db.prepare(`
@@ -365,13 +371,13 @@ const selectBatchById = db.prepare(`
 
 // --- Prepared statements - Batch Items ---
 const insertBatchItem = db.prepare(`
-  INSERT INTO batch_items (batch_id, recipient_id, amount, saturdays_attended, zoom_type, transfer_fee, transfer_status, notify_status, created_at, updated_at)
-  VALUES (?, ?, ?, ?, ?, ?, 'pending', 'pending', ?, ?)
+  INSERT INTO batch_items (batch_id, recipient_id, amount, payment_method, saturdays_attended, zoom_type, transfer_fee, transfer_status, notify_status, created_at, updated_at)
+  VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', 'pending', ?, ?)
 `);
 
 const updateBatchItem = db.prepare(`
   UPDATE batch_items
-  SET amount = ?, saturdays_attended = ?, zoom_type = ?, transfer_fee = ?, transfer_status = ?, notify_status = ?, transfer_at = ?, notified_at = ?, notes = ?, transfer_proof = ?, updated_at = ?
+  SET amount = ?, payment_method = ?, saturdays_attended = ?, zoom_type = ?, transfer_fee = ?, transfer_status = ?, notify_status = ?, transfer_at = ?, notified_at = ?, notes = ?, transfer_proof = ?, updated_at = ?
   WHERE id = ?
 `);
 
@@ -379,7 +385,7 @@ const deleteBatchItem = db.prepare("DELETE FROM batch_items WHERE id = ?");
 
 const selectBatchItems = db.prepare(`
   SELECT
-    bi.id, bi.batch_id, bi.recipient_id, bi.amount, bi.saturdays_attended,
+    bi.id, bi.batch_id, bi.recipient_id, bi.amount, bi.payment_method, bi.saturdays_attended,
     bi.zoom_type, bi.transfer_fee, bi.transfer_status, bi.notify_status, bi.transfer_at,
     bi.notified_at, bi.notes, bi.created_at, bi.updated_at,
     (bi.transfer_proof IS NOT NULL AND bi.transfer_proof != '') AS has_transfer_proof,
@@ -831,6 +837,7 @@ export const batchItemDb = {
       batchId,
       recipientId,
       amount,
+      "transfer",
       saturdaysAttended,
       zoomType,
       transferFee,
@@ -842,6 +849,7 @@ export const batchItemDb = {
       batch_id: batchId,
       recipient_id: recipientId,
       amount,
+      payment_method: "transfer",
       saturdays_attended: saturdaysAttended,
       zoom_type: zoomType as "none" | "single" | "family",
       transfer_fee: transferFee,
@@ -857,8 +865,19 @@ export const batchItemDb = {
     if (!existing) return false;
     const now = new Date().toISOString();
     const updated = { ...existing, ...data };
+    if (updated.payment_method === "cash") {
+      updated.transfer_fee = 0;
+      updated.transfer_proof = null;
+    }
+    const proofValue =
+      updated.payment_method === "cash"
+        ? null
+        : data.transfer_proof !== undefined
+          ? updated.transfer_proof
+          : (existing.transfer_proof ?? null);
     const result = updateBatchItem.run(
       updated.amount,
+      updated.payment_method ?? "transfer",
       updated.saturdays_attended,
       updated.zoom_type,
       updated.transfer_fee ?? 0,
@@ -867,7 +886,7 @@ export const batchItemDb = {
       updated.transfer_at || null,
       updated.notified_at || null,
       updated.notes || null,
-      updated.transfer_proof ?? existing.transfer_proof ?? null,
+      proofValue,
       now,
       id,
     );
@@ -877,7 +896,8 @@ export const batchItemDb = {
       (data.transfer_status !== undefined ||
         data.transfer_at !== undefined ||
         data.amount !== undefined ||
-        data.transfer_fee !== undefined)
+        data.transfer_fee !== undefined ||
+        data.payment_method !== undefined)
     ) {
       syncBatchTransferExpense(existing.batch_id);
     }
@@ -906,6 +926,7 @@ export const batchItemDb = {
               batchId,
               r.id!,
               batch.default_amount,
+              "transfer",
               0,
               "none",
               0,
@@ -928,7 +949,17 @@ export const batchItemDb = {
             batch.zoom_single_rate,
             batch.zoom_family_rate,
           );
-          insertBatchItem.run(batchId, r.id!, amount, 0, zoomType, 0, now, now);
+          insertBatchItem.run(
+            batchId,
+            r.id!,
+            amount,
+            "transfer",
+            0,
+            zoomType,
+            0,
+            now,
+            now,
+          );
           count++;
         }
       }
@@ -960,7 +991,7 @@ export const batchItemDb = {
     const now = new Date().toISOString();
     const result = db
       .prepare(
-        "UPDATE batch_items SET transfer_proof = ?, transfer_status = ?, transfer_at = ?, updated_at = ? WHERE id = ?",
+        "UPDATE batch_items SET transfer_proof = ?, payment_method = 'transfer', transfer_status = ?, transfer_at = ?, updated_at = ? WHERE id = ?",
       )
       .run(
         filename,

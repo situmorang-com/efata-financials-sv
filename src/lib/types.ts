@@ -39,13 +39,14 @@ export interface BatchItem {
   batch_id: number;
   recipient_id: number;
   amount: number;
+  payment_method: "transfer" | "cash";
   saturdays_attended: number;
   zoom_type: "none" | "single" | "family";
   transfer_status: "pending" | "done";
   notify_status: "pending" | "sent" | "skipped";
   transfer_at?: string;
   notified_at?: string;
-  transfer_proof?: string; // base64 data URL (only fetched on-demand via proof endpoint)
+  transfer_proof?: string | null; // base64 data URL or stored filename (only fetched on-demand via proof endpoint)
   has_transfer_proof?: number; // 0 or 1 flag (included in list queries)
   notes?: string;
   created_at: string;
