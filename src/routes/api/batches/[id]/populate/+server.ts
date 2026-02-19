@@ -12,6 +12,7 @@ export const POST: RequestHandler = async ({ params }) => {
 		return json({ message: `Added ${count} recipients to batch`, count });
 	} catch (error) {
 		console.error('Error populating batch:', error);
-		return json({ error: 'Failed to populate batch' }, { status: 500 });
+		const message = error instanceof Error ? error.message : 'Failed to populate batch';
+		return json({ error: message }, { status: 500 });
 	}
 };

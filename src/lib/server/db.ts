@@ -262,6 +262,16 @@ if (!columnExists("batches", "type")) {
     "ALTER TABLE batches ADD COLUMN type TEXT NOT NULL DEFAULT 'monthly'",
   );
 }
+if (!columnExists("batches", "default_amount")) {
+  db.exec(
+    "ALTER TABLE batches ADD COLUMN default_amount INTEGER NOT NULL DEFAULT 0",
+  );
+}
+if (!columnExists("batches", "status")) {
+  db.exec(
+    "ALTER TABLE batches ADD COLUMN status TEXT NOT NULL DEFAULT 'active'",
+  );
+}
 
 // Batch items migrations
 if (!columnExists("batch_items", "transfer_proof")) {

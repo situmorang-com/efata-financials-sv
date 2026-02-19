@@ -129,19 +129,26 @@
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify(payload)
 			});
-			const batch = await res.json();
-			await fetch(`/api/batches/${batch.id}/populate`, {
+			const batchResult = await res.json();
+			if (!res.ok) {
+				throw new Error(batchResult?.error || 'Gagal membuat batch');
+			}
+			const populateRes = await fetch(`/api/batches/${batchResult.id}/populate`, {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' }
 			});
+			const populateResult = await populateRes.json();
+			if (!populateRes.ok) {
+				throw new Error(populateResult?.error || 'Batch dibuat, tetapi gagal mengisi penerima');
+			}
 			showForm = false;
 			formData = { name: '', description: 'Transport & Zoom', total_saturdays: 4, transport_rate: 25000, zoom_single_rate: 50000, zoom_family_rate: 30000 };
 			specialFormData = { name: '', description: 'Batch Spesial', amount: 100000 };
 			addToast('Batch berhasil dibuat', 'success');
-			window.location.href = `/batches/${batch.id}`;
+			window.location.href = `/batches/${batchResult.id}`;
 		} catch (e) {
 			console.error('Failed to create batch:', e);
-			addToast('Gagal membuat batch', 'error');
+			addToast(e instanceof Error ? e.message : 'Gagal membuat batch', 'error');
 		}
 	}
 
