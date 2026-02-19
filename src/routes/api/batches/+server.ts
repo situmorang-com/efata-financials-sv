@@ -31,6 +31,8 @@ export const POST: RequestHandler = async ({ request }) => {
     return json(batch, { status: 201 });
   } catch (error) {
     console.error("Error creating batch:", error);
-    return json({ error: "Failed to create batch" }, { status: 500 });
+    const message =
+      error instanceof Error ? error.message : "Failed to create batch";
+    return json({ error: message }, { status: 500 });
   }
 };
