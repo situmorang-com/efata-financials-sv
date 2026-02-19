@@ -39,8 +39,10 @@ export function saveProofFile(
   itemId: number,
   buffer: Buffer,
   extension: string,
+  preferredBaseName?: string,
 ): string {
-  const filename = `proof-${itemId}.${extension}`;
+  const safeBase = preferredBaseName?.trim().replace(/\s+/g, "-");
+  const filename = `${safeBase || `proof-${itemId}`}.${extension}`;
   writeFileSync(join(PROOFS_DIR, filename), buffer);
   return filename;
 }

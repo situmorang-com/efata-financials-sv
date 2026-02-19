@@ -1,7 +1,15 @@
 import { json } from '@sveltejs/kit';
 import sharp from 'sharp';
-import { batchItemDb, saveProofFile, readProofFile, deleteProofFile } from '$lib/server/db.js';
+import { batchDb, batchItemDb, saveProofFile, readProofFile, deleteProofFile } from '$lib/server/db.js';
 import type { RequestHandler } from './$types.js';
+
+function filenamePart(value: string): string {
+	return value
+		.trim()
+		.replace(/[^a-zA-Z0-9]+/g, '-')
+		.replace(/^-+|-+$/g, '')
+		.slice(0, 80);
+}
 
 // Upload transfer proof — server-side compression to WebP via sharp
 export const POST: RequestHandler = async ({ params, request }) => {
@@ -31,6 +39,7 @@ export const POST: RequestHandler = async ({ params, request }) => {
 		}
 
 		const itemId = Number(params.itemId);
+		const batchId = Number(params.id);
 
 		// Delete old proof file if exists
 		const oldProof = batchItemDb.getProof(itemId);
@@ -44,7 +53,16 @@ export const POST: RequestHandler = async ({ params, request }) => {
 			.avif({ quality: 30 })
 			.toBuffer();
 
-		const filename = saveProofFile(itemId, compressed, 'avif');
+		const batch = batchDb.getById(batchId);
+		const item = batchItemDb.getByBatchId(batchId).find((i) => i.id === itemId);
+		const parts = [
+			batch?.description ? filenamePart(batch.description) : '',
+			batch?.name ? filenamePart(batch.name) : '',
+			item?.recipient_name ? filenamePart(item.recipient_name) : ''
+		].filter(Boolean);
+		const preferredBaseName = parts.join('-') || `proof-${itemId}`;
+
+		const filename = saveProofFile(itemId, compressed, 'avif', preferredBaseName);
 		const success = batchItemDb.setProof(itemId, filename);
 		if (!success) {
 			return json({ error: 'Batch item not found' }, { status: 404 });
