@@ -21,7 +21,12 @@ import { calculateAmount } from "$lib/types.js";
 import { seedRecipients } from "./seed.js";
 
 // Proof image file storage
-const PROOFS_DIR = join(process.cwd(), "data", "proofs");
+const DATA_DIR = join(process.cwd(), "data");
+if (!existsSync(DATA_DIR)) {
+  mkdirSync(DATA_DIR, { recursive: true });
+}
+
+const PROOFS_DIR = join(DATA_DIR, "proofs");
 if (!existsSync(PROOFS_DIR)) {
   mkdirSync(PROOFS_DIR, { recursive: true });
 }
@@ -53,7 +58,8 @@ export function deleteProofFile(filename: string): void {
   }
 }
 
-const db = new Database(dev ? "efata.db" : "efata.db");
+const DB_PATH = join(DATA_DIR, "efata.db");
+const db = new Database(DB_PATH);
 
 // Enable WAL mode for better concurrent access
 db.pragma("journal_mode = WAL");
