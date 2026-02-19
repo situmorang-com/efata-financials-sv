@@ -665,7 +665,7 @@
 		{:else}
 			<!-- Desktop Table (hidden on mobile) -->
 			<div class="glass-card rounded-2xl overflow-hidden fade-up hidden lg:block">
-				<div class="overflow-x-auto glass-scrollbar">
+				<div class="overflow-x-auto glass-scrollbar pr-2">
 					<table class="w-full">
 						<thead>
 							<tr class="border-b border-white/10 table-head-row">
@@ -678,10 +678,10 @@
 								{/if}
 								<th class="text-right px-3 py-3 table-head-cell">Total</th>
 								<th class="text-center px-3 py-3 table-head-cell">Metode</th>
-								<th class="text-right px-3 py-3 table-head-cell">Biaya TF</th>
-								<th class="text-left px-3 py-3 table-head-cell">Tgl TF</th>
+								<th class="text-right px-2 py-3 table-head-cell">Biaya TF</th>
+								<th class="text-left px-2 py-3 table-head-cell">Tgl TF</th>
 								<th class="text-center px-3 py-3 table-head-cell w-12">TF</th>
-								<th class="text-center pl-2 pr-5 py-3 table-head-cell w-16">WA</th>
+								<th class="text-center pl-1 pr-3 py-3 table-head-cell w-14">WA</th>
 							</tr>
 						</thead>
 						<tbody>
@@ -759,14 +759,14 @@
 											<option value="cash">Cash</option>
 										</select>
 									</td>
-									<td class="px-3 py-2.5 text-right">
+									<td class="px-2 py-2.5 text-right">
 										{#if isCash(item)}
 											<span class="text-white/30 text-xs">-</span>
 										{:else}
 											<input
 												type="text"
 												inputmode="numeric"
-												class="glass-input rounded-lg px-2 py-1 text-xs text-white/90 w-[110px] text-right"
+												class="glass-input rounded-lg px-2 py-1 text-xs text-white/90 w-[92px] text-right"
 												value={formatCurrencyInput(item.transfer_fee || 0)}
 												onfocus={(e) => { (e.target as HTMLInputElement).value = String(item.transfer_fee || 0); }}
 												onblur={(e) => {
@@ -777,11 +777,11 @@
 											/>
 										{/if}
 									</td>
-									<td class="px-3 py-2.5">
+									<td class="px-2 py-2.5">
 										{#if item.transfer_status === 'done'}
 											<input
 												type="date"
-												class="glass-input rounded-lg px-2 py-1 text-xs text-white/80 w-[140px]"
+												class="glass-input rounded-lg px-2 py-1 text-xs text-white/80 w-[124px]"
 												value={formatDateInput(item.transfer_at)}
 												onchange={(e) => updateTransferDate(item, (e.target as HTMLInputElement).value)}
 											/>
@@ -813,7 +813,7 @@
 											/>
 										{/if}
 									</td>
-									<td class="pl-2 pr-5 py-2.5 text-center">
+									<td class="pl-1 pr-3 py-2.5 text-center">
 										<WhatsAppButton
 											phone={item.whatsapp || ''}
 											name={item.recipient_name || ''}
