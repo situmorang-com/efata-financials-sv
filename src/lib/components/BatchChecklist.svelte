@@ -382,7 +382,16 @@
 		downloading = true;
 		try {
 			const res = await fetch(`/api/batches/${batchId}/report`);
-			if (!res.ok) throw new Error('Failed to generate PDF');
+			if (!res.ok) {
+				let msg = 'Failed to generate PDF';
+				try {
+					const payload = await res.json();
+					msg = payload?.error || msg;
+				} catch {
+					// no-op
+				}
+				throw new Error(msg);
+			}
 			const blob = await res.blob();
 			const url = URL.createObjectURL(blob);
 			const a = document.createElement('a');
@@ -515,9 +524,9 @@
 					{/if}
 					<button
 						onclick={downloadReport}
-						disabled={!allDone || downloading}
+						disabled={items.length === 0 || downloading}
 						class="glass-button rounded-full px-3 py-2 text-white text-sm border border-sky-500/30 flex items-center gap-1.5
-							{!allDone || downloading ? 'opacity-50 cursor-not-allowed' : 'bg-sky-500/15 hover:bg-sky-500/30'}"
+							{items.length === 0 || downloading ? 'opacity-50 cursor-not-allowed' : 'bg-sky-500/15 hover:bg-sky-500/30'}"
 					>
 						<Download class="w-4 h-4" />
 						{downloading ? 'Membuat PDF...' : 'Unduh PDF'}

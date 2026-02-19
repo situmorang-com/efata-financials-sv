@@ -11,6 +11,10 @@ function filenamePart(value: string): string {
 		.slice(0, 80);
 }
 
+function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {
+	return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+}
+
 // Upload transfer proof — server-side compression to WebP via sharp
 export const POST: RequestHandler = async ({ params, request }) => {
 	try {
@@ -96,7 +100,7 @@ export const GET: RequestHandler = async ({ params, url }) => {
 				const match = proof.match(/^data:(image\/\w+);base64,(.+)$/);
 				if (!match) return json({ error: 'Invalid proof format' }, { status: 500 });
 				const buffer = Buffer.from(match[2], 'base64');
-				return new Response(buffer, {
+				return new Response(toArrayBuffer(buffer), {
 					headers: {
 						'Content-Type': match[1],
 						'Content-Length': buffer.length.toString(),
@@ -121,7 +125,7 @@ export const GET: RequestHandler = async ({ params, url }) => {
 				avif: 'image/avif'
 			};
 			const contentType = mimeMap[ext] || 'image/webp';
-			return new Response(buffer, {
+			return new Response(toArrayBuffer(buffer), {
 				headers: {
 					'Content-Type': contentType,
 					'Content-Length': buffer.length.toString(),
