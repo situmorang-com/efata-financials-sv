@@ -225,10 +225,10 @@ export const GET: RequestHandler = async ({ params }) => {
       "Jumlah",
       "Fee",
       "Status",
-      "WA",
       "Tgl",
     ];
-    const colWidths = [20, 118, 130, 50, 68, 54, 48, 34, 46];
+    // Compact widths so the right-most date column stays inside A4 page bounds.
+    const colWidths = [18, 108, 118, 46, 64, 50, 42, 46];
     const colXs: number[] = [];
     let cursor = margin + 6;
     for (const w of colWidths) {
@@ -275,16 +275,10 @@ export const GET: RequestHandler = async ({ params }) => {
           : "-";
       const method = normalizePaymentMethod(item.payment_method);
       const status = item.transfer_status === "done" ? "DONE" : "PENDING";
-      const waStatus =
-        item.notify_status === "sent"
-          ? "OK"
-          : item.notify_status === "skipped"
-            ? "SKIP"
-            : "-";
 
       drawText(String(i + 1), colXs[0], y - 12, 8);
-      drawText(clip(item.recipient_name || "-", 23), colXs[1], y - 12, 8);
-      drawText(clip(rekening, 28), colXs[2], y - 12, 8);
+      drawText(clip(item.recipient_name || "-", 21), colXs[1], y - 12, 8);
+      drawText(clip(rekening, 25), colXs[2], y - 12, 8);
       drawText(method.toUpperCase(), colXs[3], y - 12, 8);
       drawText(formatRupiah(item.amount || 0), colXs[4], y - 12, 8);
       drawText(
@@ -294,8 +288,7 @@ export const GET: RequestHandler = async ({ params }) => {
         8,
       );
       drawText(status, colXs[6], y - 12, 8);
-      drawText(waStatus, colXs[7], y - 12, 8);
-      drawText(formatDate(item.transfer_at), colXs[8], y - 12, 8);
+      drawText(formatDate(item.transfer_at), colXs[7], y - 12, 8);
       y -= rowHeight;
     }
 
