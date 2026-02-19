@@ -7,8 +7,8 @@ WORKDIR /app
 COPY package*.json ./
 COPY scripts ./scripts
 
-# Install dependencies
-RUN npm ci
+# Install build dependencies (include dev deps even if NODE_ENV=production is injected by CI)
+RUN npm ci --include=dev
 
 # Copy source code
 COPY . .
