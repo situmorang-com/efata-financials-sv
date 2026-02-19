@@ -414,6 +414,7 @@
 
 	function getRowClass(item: BatchItem): string {
 		if (item.transfer_status === 'done' && item.notify_status === 'sent') return 'row-completed';
+		if ((item.payment_method || 'transfer') === 'cash') return 'row-cash';
 		if (item.transfer_status === 'done') return 'row-transferred';
 		return 'glass-table-row';
 	}
@@ -648,7 +649,7 @@
 								<th class="text-right px-3 py-3 table-head-cell">Biaya TF</th>
 								<th class="text-left px-3 py-3 table-head-cell">Tgl TF</th>
 								<th class="text-center px-3 py-3 table-head-cell w-12">TF</th>
-								<th class="text-center px-3 py-3 table-head-cell w-12">WA</th>
+								<th class="text-center pl-2 pr-5 py-3 table-head-cell w-16">WA</th>
 							</tr>
 						</thead>
 						<tbody>
@@ -780,7 +781,7 @@
 											/>
 										{/if}
 									</td>
-									<td class="px-3 py-2.5 text-center">
+									<td class="pl-2 pr-5 py-2.5 text-center">
 										<WhatsAppButton
 											phone={item.whatsapp || ''}
 											name={item.recipient_name || ''}
@@ -807,7 +808,7 @@
 			<!-- Mobile Card View (hidden on desktop) -->
 			<div class="lg:hidden space-y-3 fade-up">
 				{#each visibleItems as item, i}
-					<div class="glass-card rounded-xl p-4 {item.transfer_status === 'done' && item.notify_status === 'sent' ? 'border-l-4 border-l-emerald-500/50' : item.transfer_status === 'done' ? 'border-l-4 border-l-amber-500/50' : ''}">
+					<div class="glass-card rounded-xl p-4 {item.transfer_status === 'done' && item.notify_status === 'sent' ? 'border-l-4 border-l-emerald-500/50' : (item.payment_method || 'transfer') === 'cash' ? 'border-l-4 border-l-sky-400/60' : item.transfer_status === 'done' ? 'border-l-4 border-l-amber-500/50' : ''}">
 						<div class="flex justify-between items-start gap-3">
 							<div class="flex-1 min-w-0">
 								<div class="flex items-center gap-2">
