@@ -43,16 +43,22 @@
 	let totalAmount = $derived(items.reduce((sum, i) => sum + i.amount, 0));
 	let totalTransferFee = $derived(items.reduce((sum, i) => sum + (i.transfer_fee || 0), 0));
 	let grandTotal = $derived(totalAmount + totalTransferFee);
-	let transferPaidTotal = $derived(
+	let transferAmountPaidTotal = $derived(
 		items
 			.filter((i) => (i.payment_method || 'transfer') === 'transfer' && i.transfer_status === 'done')
-			.reduce((sum, i) => sum + i.amount + (i.transfer_fee || 0), 0)
+			.reduce((sum, i) => sum + i.amount, 0)
+	);
+	let transferFeePaidTotal = $derived(
+		items
+			.filter((i) => (i.payment_method || 'transfer') === 'transfer' && i.transfer_status === 'done')
+			.reduce((sum, i) => sum + (i.transfer_fee || 0), 0)
 	);
 	let cashPaidTotal = $derived(
 		items
 			.filter((i) => (i.payment_method || 'transfer') === 'cash' && i.transfer_status === 'done')
 			.reduce((sum, i) => sum + i.amount, 0)
 	);
+	let totalPaidSummary = $derived(transferAmountPaidTotal + transferFeePaidTotal + cashPaidTotal);
 	let pendingTransferCount = $derived(items.filter(i => i.transfer_status === 'pending').length);
 	let pendingNotifyCount = $derived(items.filter(i => i.transfer_status === 'done' && i.notify_status === 'pending').length);
 	let allDone = $derived(
@@ -577,7 +583,11 @@
 				<div class="flex flex-wrap items-center gap-4 text-xs">
 					<div class="text-white/60">
 						<span class="text-white/40 mr-1">Transferred:</span>
-						<span class="text-emerald-200 font-semibold">{formatRupiah(transferPaidTotal)}</span>
+						<span class="text-emerald-200 font-semibold">{formatRupiah(transferAmountPaidTotal)}</span>
+					</div>
+					<div class="text-white/60">
+						<span class="text-white/40 mr-1">Transfer Fee:</span>
+						<span class="text-violet-200 font-semibold">{formatRupiah(transferFeePaidTotal)}</span>
 					</div>
 					<div class="text-white/60">
 						<span class="text-white/40 mr-1">Cash:</span>
@@ -585,7 +595,7 @@
 					</div>
 					<div class="text-white/60">
 						<span class="text-white/40 mr-1">Total Paid:</span>
-						<span class="text-sky-200 font-semibold">{formatRupiah(transferPaidTotal + cashPaidTotal)}</span>
+						<span class="text-sky-200 font-semibold">{formatRupiah(totalPaidSummary)}</span>
 					</div>
 				</div>
 			</div>
