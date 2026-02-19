@@ -41,6 +41,8 @@
 	let notifiedCount = $derived(items.filter(i => i.notify_status === 'sent').length);
 	let skippedNotifyCount = $derived(items.filter(i => i.notify_status === 'skipped').length);
 	let totalAmount = $derived(items.reduce((sum, i) => sum + i.amount, 0));
+	let totalTransferFee = $derived(items.reduce((sum, i) => sum + (i.transfer_fee || 0), 0));
+	let grandTotal = $derived(totalAmount + totalTransferFee);
 	let pendingTransferCount = $derived(items.filter(i => i.transfer_status === 'pending').length);
 	let pendingNotifyCount = $derived(items.filter(i => i.transfer_status === 'done' && i.notify_status === 'pending').length);
 	let allDone = $derived(
@@ -181,6 +183,23 @@
 			item.amount = oldAmount;
 			console.error('Failed to update amount:', e);
 			addToast('Gagal mengubah nominal', 'error');
+		}
+	}
+
+	async function updateTransferFee(item: BatchItem, newFee: number) {
+		const sanitized = Math.max(0, Math.round(newFee || 0));
+		const oldFee = item.transfer_fee;
+		item.transfer_fee = sanitized;
+		try {
+			await fetch(`/api/batches/${batchId}/items/${item.id}`, {
+				method: 'PUT',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ transfer_fee: sanitized })
+			});
+		} catch (e) {
+			item.transfer_fee = oldFee;
+			console.error('Failed to update transfer fee:', e);
+			addToast('Gagal mengubah biaya transfer', 'error');
 		}
 	}
 
@@ -435,7 +454,7 @@
 						<p class="text-white/60 text-xs uppercase tracking-wider">Penerima</p>
 					</div>
 					<p class="text-2xl font-bold text-white mt-1">{items.length}</p>
-					<p class="text-white/50 text-xs mt-1">Total: {formatRupiah(totalAmount)}</p>
+					<p class="text-white/50 text-xs mt-1">Total: {formatRupiah(grandTotal)}</p>
 				</div>
 				<div class="glass-card rounded-2xl p-4 lift-on-hover">
 					<div class="flex items-center gap-2 mb-1">
@@ -530,6 +549,7 @@
 									<th class="text-center px-3 py-3 table-head-cell">Zoom</th>
 								{/if}
 								<th class="text-right px-3 py-3 table-head-cell">Total</th>
+								<th class="text-right px-3 py-3 table-head-cell">Biaya TF</th>
 								<th class="text-left px-3 py-3 table-head-cell">Tgl TF</th>
 								<th class="text-center px-3 py-3 table-head-cell w-12">TF</th>
 								<th class="text-center px-3 py-3 table-head-cell w-12">WA</th>
@@ -596,6 +616,20 @@
 											</span>
 										{/if}
 									</td>
+									<td class="px-3 py-2.5 text-right">
+									<input
+										type="text"
+										inputmode="numeric"
+										class="glass-input rounded-lg px-2 py-1 text-xs text-white/90 w-[110px] text-right"
+										value={formatCurrencyInput(item.transfer_fee || 0)}
+										onfocus={(e) => { (e.target as HTMLInputElement).value = String(item.transfer_fee || 0); }}
+										onblur={(e) => {
+											const parsed = parseCurrencyInput((e.target as HTMLInputElement).value);
+											updateTransferFee(item, parsed);
+											(e.target as HTMLInputElement).value = formatCurrencyInput(parsed);
+										}}
+									/>
+								</td>
 									<td class="px-3 py-2.5">
 										{#if item.transfer_status === 'done'}
 											<input
@@ -686,6 +720,23 @@
 									<span class="text-white font-bold text-sm font-mono">{formatRupiah(item.amount)}</span>
 								{/if}
 							</div>
+						</div>
+
+						<!-- Transfer fee (mobile) -->
+						<div class="mt-2 ml-5 flex items-center justify-between">
+							<span class="text-white/40 text-xs">Biaya TF</span>
+							<input
+								type="text"
+								inputmode="numeric"
+								class="glass-input rounded-lg px-2 py-1 text-xs text-white/90 w-[110px] text-right"
+								value={formatCurrencyInput(item.transfer_fee || 0)}
+								onfocus={(e) => { (e.target as HTMLInputElement).value = String(item.transfer_fee || 0); }}
+								onblur={(e) => {
+									const parsed = parseCurrencyInput((e.target as HTMLInputElement).value);
+									updateTransferFee(item, parsed);
+									(e.target as HTMLInputElement).value = formatCurrencyInput(parsed);
+								}}
+							/>
 						</div>
 
 						{#if !isSpecial}

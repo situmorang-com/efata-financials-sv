@@ -8,7 +8,15 @@ import {
   unlinkSync,
 } from "fs";
 import { join } from "path";
-import type { Recipient, Batch, BatchItem } from "$lib/types.js";
+import type {
+  Recipient,
+  Batch,
+  BatchItem,
+  FinanceCategory,
+  FinanceParty,
+  FinanceAccount,
+  FinanceTransaction,
+} from "$lib/types.js";
 import { calculateAmount } from "$lib/types.js";
 import { seedRecipients } from "./seed.js";
 
@@ -107,6 +115,109 @@ db.exec(`
   )
 `);
 
+db.exec(`
+  CREATE TABLE IF NOT EXISTS parties (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    party_type TEXT NOT NULL CHECK (party_type IN ('member', 'donor', 'vendor', 'other')),
+    whatsapp TEXT,
+    email TEXT,
+    notes TEXT,
+    is_active INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  )
+`);
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS categories (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    kind TEXT NOT NULL CHECK (kind IN ('income', 'expense')),
+    parent_id INTEGER,
+    is_active INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY (parent_id) REFERENCES categories(id)
+  )
+`);
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS accounts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    account_type TEXT NOT NULL CHECK (account_type IN ('cash', 'bank', 'ewallet', 'other')),
+    bank_name TEXT,
+    account_number TEXT,
+    holder_name TEXT,
+    opening_balance INTEGER NOT NULL DEFAULT 0,
+    is_active INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  )
+`);
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS transactions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    type TEXT NOT NULL CHECK (type IN ('income', 'expense')),
+    sub_type TEXT NOT NULL,
+    party_id INTEGER,
+    category_id INTEGER NOT NULL,
+    account_id INTEGER,
+    amount INTEGER NOT NULL CHECK (amount >= 0),
+    txn_date TEXT NOT NULL,
+    payment_method TEXT,
+    service_label TEXT,
+    reference_no TEXT,
+    status TEXT NOT NULL DEFAULT 'posted' CHECK (status IN ('draft', 'pending_approval', 'approved', 'posted', 'void')),
+    notes TEXT,
+    created_by INTEGER,
+    approved_by INTEGER,
+    approved_at TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY (party_id) REFERENCES parties(id),
+    FOREIGN KEY (category_id) REFERENCES categories(id),
+    FOREIGN KEY (account_id) REFERENCES accounts(id)
+  )
+`);
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS audit_logs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    actor_id INTEGER,
+    entity TEXT NOT NULL,
+    entity_id INTEGER NOT NULL,
+    action TEXT NOT NULL,
+    before_json TEXT,
+    after_json TEXT,
+    created_at TEXT NOT NULL
+  )
+`);
+
+db.exec(
+  `CREATE INDEX IF NOT EXISTS idx_transactions_type_date ON transactions(type, txn_date)`,
+);
+db.exec(
+  `CREATE INDEX IF NOT EXISTS idx_transactions_sub_type_date ON transactions(sub_type, txn_date)`,
+);
+db.exec(
+  `CREATE INDEX IF NOT EXISTS idx_transactions_category_date ON transactions(category_id, txn_date)`,
+);
+db.exec(
+  `CREATE INDEX IF NOT EXISTS idx_transactions_status ON transactions(status)`,
+);
+db.exec(`CREATE INDEX IF NOT EXISTS idx_parties_type ON parties(party_type)`);
+db.exec(`CREATE INDEX IF NOT EXISTS idx_parties_active ON parties(is_active)`);
+db.exec(
+  `CREATE UNIQUE INDEX IF NOT EXISTS idx_categories_kind_name ON categories(kind, name)`,
+);
+db.exec(
+  `CREATE INDEX IF NOT EXISTS idx_audit_entity ON audit_logs(entity, entity_id)`,
+);
+db.exec(`CREATE INDEX IF NOT EXISTS idx_audit_actor ON audit_logs(actor_id)`);
+
 // --- Migration: add new columns to existing tables if they don't exist ---
 function columnExists(table: string, column: string): boolean {
   const info = db.prepare(`PRAGMA table_info(${table})`).all() as {
@@ -164,6 +275,11 @@ if (!columnExists("batch_items", "saturdays_attended")) {
 if (!columnExists("batch_items", "zoom_type")) {
   db.exec(
     "ALTER TABLE batch_items ADD COLUMN zoom_type TEXT NOT NULL DEFAULT 'none'",
+  );
+}
+if (!columnExists("batch_items", "transfer_fee")) {
+  db.exec(
+    "ALTER TABLE batch_items ADD COLUMN transfer_fee INTEGER NOT NULL DEFAULT 0",
   );
 }
 
@@ -239,13 +355,13 @@ const selectBatchById = db.prepare(`
 
 // --- Prepared statements - Batch Items ---
 const insertBatchItem = db.prepare(`
-  INSERT INTO batch_items (batch_id, recipient_id, amount, saturdays_attended, zoom_type, transfer_status, notify_status, created_at, updated_at)
-  VALUES (?, ?, ?, ?, ?, 'pending', 'pending', ?, ?)
+  INSERT INTO batch_items (batch_id, recipient_id, amount, saturdays_attended, zoom_type, transfer_fee, transfer_status, notify_status, created_at, updated_at)
+  VALUES (?, ?, ?, ?, ?, ?, 'pending', 'pending', ?, ?)
 `);
 
 const updateBatchItem = db.prepare(`
   UPDATE batch_items
-  SET amount = ?, saturdays_attended = ?, zoom_type = ?, transfer_status = ?, notify_status = ?, transfer_at = ?, notified_at = ?, notes = ?, transfer_proof = ?, updated_at = ?
+  SET amount = ?, saturdays_attended = ?, zoom_type = ?, transfer_fee = ?, transfer_status = ?, notify_status = ?, transfer_at = ?, notified_at = ?, notes = ?, transfer_proof = ?, updated_at = ?
   WHERE id = ?
 `);
 
@@ -254,7 +370,7 @@ const deleteBatchItem = db.prepare("DELETE FROM batch_items WHERE id = ?");
 const selectBatchItems = db.prepare(`
   SELECT
     bi.id, bi.batch_id, bi.recipient_id, bi.amount, bi.saturdays_attended,
-    bi.zoom_type, bi.transfer_status, bi.notify_status, bi.transfer_at,
+    bi.zoom_type, bi.transfer_fee, bi.transfer_status, bi.notify_status, bi.transfer_at,
     bi.notified_at, bi.notes, bi.created_at, bi.updated_at,
     (bi.transfer_proof IS NOT NULL AND bi.transfer_proof != '') AS has_transfer_proof,
     r.name AS recipient_name,
@@ -487,6 +603,200 @@ export const batchDb = {
   },
 };
 
+function ensureExpenseCategoryId(name: string): number {
+  const existing = db
+    .prepare(
+      "SELECT id FROM categories WHERE kind = 'expense' AND name = ? LIMIT 1",
+    )
+    .get(name) as { id: number } | undefined;
+  if (existing?.id) return existing.id;
+
+  const now = new Date().toISOString();
+  const result = db
+    .prepare(
+      "INSERT INTO categories (name, kind, parent_id, is_active, created_at, updated_at) VALUES (?, 'expense', NULL, 1, ?, ?)",
+    )
+    .run(name, now, now);
+  return Number(result.lastInsertRowid);
+}
+
+function toBatchMonthLabel(batchName?: string | null): string {
+  if (!batchName) return "";
+  return batchName.replace(/^transfer\s+/i, "").trim();
+}
+
+function buildBatchExpenseLabel(
+  batchName?: string | null,
+  batchDescription?: string | null,
+): string {
+  const parts = ["Bantuan Sosial"];
+  const description = (batchDescription || "").trim();
+  const monthPart = toBatchMonthLabel(batchName);
+  if (description) parts.push(description);
+  if (monthPart) parts.push(monthPart);
+  return parts.join(" ");
+}
+
+function voidLegacyPerItemTransferExpenses(batchId: number): void {
+  const now = new Date().toISOString();
+  db.prepare(
+    `UPDATE transactions
+     SET status = 'void', updated_at = ?
+     WHERE reference_no IN (
+       SELECT 'BATCH-ITEM-' || CAST(id AS TEXT)
+       FROM batch_items
+       WHERE batch_id = ?
+     )
+       AND status != 'void'`,
+  ).run(now, batchId);
+}
+
+function upsertExpenseTransaction(
+  ref: string,
+  categoryId: number,
+  amount: number,
+  txnDate: string,
+  serviceLabel: string,
+  notes: string,
+  now: string,
+): void {
+  const existing = db
+    .prepare(
+      "SELECT id FROM transactions WHERE reference_no = ? ORDER BY id DESC LIMIT 1",
+    )
+    .get(ref) as { id: number } | undefined;
+
+  if (amount <= 0) {
+    if (existing?.id) {
+      db.prepare(
+        "UPDATE transactions SET status = 'void', updated_at = ? WHERE id = ?",
+      ).run(now, existing.id);
+    }
+    return;
+  }
+
+  if (existing?.id) {
+    db.prepare(
+      `UPDATE transactions
+       SET type = 'expense', sub_type = 'expense', category_id = ?, amount = ?, txn_date = ?, payment_method = 'transfer', service_label = ?, status = 'posted', notes = ?, updated_at = ?
+       WHERE id = ?`,
+    ).run(categoryId, amount, txnDate, serviceLabel, notes, now, existing.id);
+    return;
+  }
+
+  db.prepare(
+    `INSERT INTO transactions
+    (type, sub_type, party_id, category_id, account_id, amount, txn_date, payment_method, service_label, reference_no, status, notes, created_by, approved_by, approved_at, created_at, updated_at)
+    VALUES ('expense', 'expense', NULL, ?, NULL, ?, ?, 'transfer', ?, ?, 'posted', ?, NULL, NULL, NULL, ?, ?)`,
+  ).run(categoryId, amount, txnDate, serviceLabel, ref, notes, now, now);
+}
+
+function syncBatchTransferExpense(batchId: number): void {
+  const summary = db
+    .prepare(
+      `SELECT
+         b.id,
+         b.name AS batch_name,
+         b.description AS batch_description,
+         COALESCE(SUM(CASE WHEN bi.transfer_status = 'done' THEN bi.amount ELSE 0 END), 0) AS total_amount,
+         COALESCE(SUM(CASE WHEN bi.transfer_status = 'done' THEN bi.transfer_fee ELSE 0 END), 0) AS total_fee,
+         COALESCE(SUM(CASE WHEN bi.transfer_status = 'done' THEN 1 ELSE 0 END), 0) AS done_count,
+         MAX(CASE WHEN bi.transfer_status = 'done' THEN bi.transfer_at ELSE NULL END) AS latest_transfer_at
+       FROM batches b
+       LEFT JOIN batch_items bi ON bi.batch_id = b.id
+       WHERE b.id = ?
+       GROUP BY b.id`,
+    )
+    .get(batchId) as
+    | {
+        id: number;
+        batch_name: string | null;
+        batch_description: string | null;
+        total_amount: number;
+        total_fee: number;
+        done_count: number;
+        latest_transfer_at: string | null;
+      }
+    | undefined;
+  if (!summary) return;
+
+  voidLegacyPerItemTransferExpenses(batchId);
+
+  const now = new Date().toISOString();
+  const txnDate = (summary.latest_transfer_at || now).slice(0, 10);
+
+  // 1) Bantuan Sosial (transfer amounts)
+  const refAmount = `BATCH-${batchId}`;
+  const categoryId = ensureExpenseCategoryId("Bantuan Sosial");
+  const serviceLabel = buildBatchExpenseLabel(
+    summary.batch_name,
+    summary.batch_description,
+  );
+  const notesAmount = `[AUTO_BATCH_TRANSFER] ${summary.done_count} transfer pada batch ${summary.batch_name || `#${batchId}`}`;
+
+  if (summary.done_count <= 0 || summary.total_amount <= 0) {
+    // Void both if no done transfers
+    const existingAmount = db
+      .prepare(
+        "SELECT id FROM transactions WHERE reference_no = ? ORDER BY id DESC LIMIT 1",
+      )
+      .get(refAmount) as { id: number } | undefined;
+    if (existingAmount?.id) {
+      db.prepare(
+        "UPDATE transactions SET status = 'void', updated_at = ? WHERE id = ?",
+      ).run(now, existingAmount.id);
+    }
+    const refFee = `BATCH-${batchId}-FEE`;
+    const existingFee = db
+      .prepare(
+        "SELECT id FROM transactions WHERE reference_no = ? ORDER BY id DESC LIMIT 1",
+      )
+      .get(refFee) as { id: number } | undefined;
+    if (existingFee?.id) {
+      db.prepare(
+        "UPDATE transactions SET status = 'void', updated_at = ? WHERE id = ?",
+      ).run(now, existingFee.id);
+    }
+    return;
+  }
+
+  upsertExpenseTransaction(
+    refAmount,
+    categoryId,
+    summary.total_amount,
+    txnDate,
+    serviceLabel,
+    notesAmount,
+    now,
+  );
+
+  // 2) Biaya Transfer Bank (separate line)
+  const refFee = `BATCH-${batchId}-FEE`;
+  const feeCategoryId = ensureExpenseCategoryId("Biaya Transfer Bank");
+  const feeServiceLabel = `Biaya Transfer Bank \u2022 ${serviceLabel}`;
+  const notesFee = `[AUTO_BATCH_TRANSFER] Biaya transfer ${summary.done_count} transaksi pada batch ${summary.batch_name || `#${batchId}`}`;
+
+  upsertExpenseTransaction(
+    refFee,
+    feeCategoryId,
+    summary.total_fee,
+    txnDate,
+    feeServiceLabel,
+    notesFee,
+    now,
+  );
+}
+
+function voidBatchTransferExpense(batchId: number): void {
+  const now = new Date().toISOString();
+  const ref = `BATCH-${batchId}`;
+  const refFee = `BATCH-${batchId}-FEE`;
+  db.prepare(
+    "UPDATE transactions SET status = 'void', updated_at = ? WHERE reference_no IN (?, ?) AND status != 'void'",
+  ).run(now, ref, refFee);
+  voidLegacyPerItemTransferExpenses(batchId);
+}
+
 export const batchItemDb = {
   getByBatchId: (batchId: number): BatchItem[] => {
     return selectBatchItems.all(batchId) as BatchItem[];
@@ -502,6 +812,7 @@ export const batchItemDb = {
     amount: number,
     saturdaysAttended: number = 0,
     zoomType: string = "none",
+    transferFee: number = 0,
   ): BatchItem | null => {
     const exists = checkBatchItemExists.get(batchId, recipientId);
     if (exists) return null;
@@ -512,6 +823,7 @@ export const batchItemDb = {
       amount,
       saturdaysAttended,
       zoomType,
+      transferFee,
       now,
       now,
     );
@@ -522,6 +834,7 @@ export const batchItemDb = {
       amount,
       saturdays_attended: saturdaysAttended,
       zoom_type: zoomType as "none" | "single" | "family",
+      transfer_fee: transferFee,
       transfer_status: "pending",
       notify_status: "pending",
       created_at: now,
@@ -538,6 +851,7 @@ export const batchItemDb = {
       updated.amount,
       updated.saturdays_attended,
       updated.zoom_type,
+      updated.transfer_fee ?? 0,
       updated.transfer_status,
       updated.notify_status,
       updated.transfer_at || null,
@@ -547,11 +861,25 @@ export const batchItemDb = {
       now,
       id,
     );
-    return result.changes > 0;
+    const changed = result.changes > 0;
+    if (
+      changed &&
+      (data.transfer_status !== undefined ||
+        data.transfer_at !== undefined ||
+        data.amount !== undefined ||
+        data.transfer_fee !== undefined)
+    ) {
+      syncBatchTransferExpense(existing.batch_id);
+    }
+    return changed;
   },
 
   delete: (id: number): boolean => {
+    const existing = selectBatchItemById.get(id) as BatchItem | undefined;
     const result = deleteBatchItem.run(id);
+    if (existing?.batch_id) {
+      syncBatchTransferExpense(existing.batch_id);
+    }
     return result.changes > 0;
   },
 
@@ -570,6 +898,7 @@ export const batchItemDb = {
               batch.default_amount,
               0,
               "none",
+              0,
               now,
               now,
             );
@@ -589,7 +918,7 @@ export const batchItemDb = {
             batch.zoom_single_rate,
             batch.zoom_family_rate,
           );
-          insertBatchItem.run(batchId, r.id!, amount, 0, zoomType, now, now);
+          insertBatchItem.run(batchId, r.id!, amount, 0, zoomType, 0, now, now);
           count++;
         }
       }
@@ -630,7 +959,14 @@ export const batchItemDb = {
         now,
         id,
       );
-    return result.changes > 0;
+    const changed = result.changes > 0;
+    if (changed) {
+      const item = selectBatchItemById.get(id) as BatchItem | undefined;
+      if (item?.batch_id) {
+        syncBatchTransferExpense(item.batch_id);
+      }
+    }
+    return changed;
   },
 
   bulkUpdateTransfer: (
@@ -650,6 +986,17 @@ export const batchItemDb = {
       }
     });
     updateTransaction();
+    if (itemIds.length === 0) return count;
+    const batchIds = db
+      .prepare(
+        `SELECT DISTINCT batch_id
+         FROM batch_items
+         WHERE id IN (${itemIds.map(() => "?").join(",")})`,
+      )
+      .all(...itemIds) as Array<{ batch_id: number }>;
+    for (const row of batchIds) {
+      syncBatchTransferExpense(row.batch_id);
+    }
     return count;
   },
 
@@ -699,7 +1046,748 @@ export const batchItemDb = {
       }
     });
     updateTransaction();
+    syncBatchTransferExpense(batchId);
     return count;
+  },
+};
+
+export const financeCategoryDb = {
+  getAll: (kind?: "income" | "expense"): FinanceCategory[] => {
+    if (kind) {
+      return db
+        .prepare(
+          "SELECT * FROM categories WHERE kind = ? AND is_active = 1 ORDER BY name",
+        )
+        .all(kind) as FinanceCategory[];
+    }
+    return db
+      .prepare(
+        "SELECT * FROM categories WHERE is_active = 1 ORDER BY kind, name",
+      )
+      .all() as FinanceCategory[];
+  },
+
+  getById: (id: number): FinanceCategory | undefined => {
+    return db.prepare("SELECT * FROM categories WHERE id = ?").get(id) as
+      | FinanceCategory
+      | undefined;
+  },
+
+  create: (data: {
+    name: string;
+    kind: "income" | "expense";
+    parent_id?: number | null;
+  }): FinanceCategory => {
+    const now = new Date().toISOString();
+    const result = db
+      .prepare(
+        "INSERT INTO categories (name, kind, parent_id, is_active, created_at, updated_at) VALUES (?, ?, ?, 1, ?, ?)",
+      )
+      .run(data.name, data.kind, data.parent_id ?? null, now, now);
+    return {
+      id: result.lastInsertRowid as number,
+      name: data.name,
+      kind: data.kind,
+      parent_id: data.parent_id ?? null,
+      is_active: 1,
+      created_at: now,
+      updated_at: now,
+    };
+  },
+
+  update: (
+    id: number,
+    data: Partial<
+      Pick<FinanceCategory, "name" | "kind" | "parent_id" | "is_active">
+    >,
+  ): boolean => {
+    const existing = financeCategoryDb.getById(id);
+    if (!existing) return false;
+    const now = new Date().toISOString();
+    const updated = { ...existing, ...data };
+    const result = db
+      .prepare(
+        "UPDATE categories SET name = ?, kind = ?, parent_id = ?, is_active = ?, updated_at = ? WHERE id = ?",
+      )
+      .run(
+        updated.name,
+        updated.kind,
+        updated.parent_id ?? null,
+        updated.is_active ?? 1,
+        now,
+        id,
+      );
+    return result.changes > 0;
+  },
+
+  softDelete: (id: number): boolean => {
+    const now = new Date().toISOString();
+    const result = db
+      .prepare(
+        "UPDATE categories SET is_active = 0, updated_at = ? WHERE id = ?",
+      )
+      .run(now, id);
+    return result.changes > 0;
+  },
+};
+
+export const financePartyDb = {
+  getAll: (partyType?: FinanceParty["party_type"]): FinanceParty[] => {
+    if (partyType) {
+      return db
+        .prepare(
+          "SELECT * FROM parties WHERE party_type = ? AND is_active = 1 ORDER BY name",
+        )
+        .all(partyType) as FinanceParty[];
+    }
+    return db
+      .prepare("SELECT * FROM parties WHERE is_active = 1 ORDER BY name")
+      .all() as FinanceParty[];
+  },
+
+  getById: (id: number): FinanceParty | undefined => {
+    return db.prepare("SELECT * FROM parties WHERE id = ?").get(id) as
+      | FinanceParty
+      | undefined;
+  },
+
+  create: (data: {
+    name: string;
+    party_type: FinanceParty["party_type"];
+    whatsapp?: string;
+    email?: string;
+    notes?: string;
+  }): FinanceParty => {
+    const now = new Date().toISOString();
+    const result = db
+      .prepare(
+        "INSERT INTO parties (name, party_type, whatsapp, email, notes, is_active, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 1, ?, ?)",
+      )
+      .run(
+        data.name,
+        data.party_type,
+        data.whatsapp ?? null,
+        data.email ?? null,
+        data.notes ?? null,
+        now,
+        now,
+      );
+    return {
+      id: result.lastInsertRowid as number,
+      name: data.name,
+      party_type: data.party_type,
+      whatsapp: data.whatsapp,
+      email: data.email,
+      notes: data.notes,
+      is_active: 1,
+      created_at: now,
+      updated_at: now,
+    };
+  },
+
+  update: (
+    id: number,
+    data: Partial<
+      Pick<
+        FinanceParty,
+        "name" | "party_type" | "whatsapp" | "email" | "notes" | "is_active"
+      >
+    >,
+  ): boolean => {
+    const existing = financePartyDb.getById(id);
+    if (!existing) return false;
+    const now = new Date().toISOString();
+    const updated = { ...existing, ...data };
+    const result = db
+      .prepare(
+        "UPDATE parties SET name = ?, party_type = ?, whatsapp = ?, email = ?, notes = ?, is_active = ?, updated_at = ? WHERE id = ?",
+      )
+      .run(
+        updated.name,
+        updated.party_type,
+        updated.whatsapp ?? null,
+        updated.email ?? null,
+        updated.notes ?? null,
+        updated.is_active ?? 1,
+        now,
+        id,
+      );
+    return result.changes > 0;
+  },
+
+  softDelete: (id: number): boolean => {
+    const now = new Date().toISOString();
+    const result = db
+      .prepare("UPDATE parties SET is_active = 0, updated_at = ? WHERE id = ?")
+      .run(now, id);
+    return result.changes > 0;
+  },
+};
+
+export const financeAccountDb = {
+  getAll: (): FinanceAccount[] => {
+    return db
+      .prepare("SELECT * FROM accounts WHERE is_active = 1 ORDER BY name")
+      .all() as FinanceAccount[];
+  },
+
+  getById: (id: number): FinanceAccount | undefined => {
+    return db.prepare("SELECT * FROM accounts WHERE id = ?").get(id) as
+      | FinanceAccount
+      | undefined;
+  },
+
+  create: (data: {
+    name: string;
+    account_type: FinanceAccount["account_type"];
+    bank_name?: string;
+    account_number?: string;
+    holder_name?: string;
+    opening_balance?: number;
+  }): FinanceAccount => {
+    const now = new Date().toISOString();
+    const openingBalance = Math.max(0, data.opening_balance ?? 0);
+    const result = db
+      .prepare(
+        "INSERT INTO accounts (name, account_type, bank_name, account_number, holder_name, opening_balance, is_active, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)",
+      )
+      .run(
+        data.name,
+        data.account_type,
+        data.bank_name ?? null,
+        data.account_number ?? null,
+        data.holder_name ?? null,
+        openingBalance,
+        now,
+        now,
+      );
+    return {
+      id: result.lastInsertRowid as number,
+      name: data.name,
+      account_type: data.account_type,
+      bank_name: data.bank_name,
+      account_number: data.account_number,
+      holder_name: data.holder_name,
+      opening_balance: openingBalance,
+      is_active: 1,
+      created_at: now,
+      updated_at: now,
+    };
+  },
+
+  update: (
+    id: number,
+    data: Partial<
+      Pick<
+        FinanceAccount,
+        | "name"
+        | "account_type"
+        | "bank_name"
+        | "account_number"
+        | "holder_name"
+        | "opening_balance"
+        | "is_active"
+      >
+    >,
+  ): boolean => {
+    const existing = financeAccountDb.getById(id);
+    if (!existing) return false;
+    const now = new Date().toISOString();
+    const updated = { ...existing, ...data };
+    const result = db
+      .prepare(
+        "UPDATE accounts SET name = ?, account_type = ?, bank_name = ?, account_number = ?, holder_name = ?, opening_balance = ?, is_active = ?, updated_at = ? WHERE id = ?",
+      )
+      .run(
+        updated.name,
+        updated.account_type,
+        updated.bank_name ?? null,
+        updated.account_number ?? null,
+        updated.holder_name ?? null,
+        Math.max(0, updated.opening_balance ?? 0),
+        updated.is_active ?? 1,
+        now,
+        id,
+      );
+    return result.changes > 0;
+  },
+
+  softDelete: (id: number): boolean => {
+    const now = new Date().toISOString();
+    const result = db
+      .prepare("UPDATE accounts SET is_active = 0, updated_at = ? WHERE id = ?")
+      .run(now, id);
+    return result.changes > 0;
+  },
+};
+
+export const financeTransactionDb = {
+  getAll: (filters?: {
+    type?: "income" | "expense";
+    sub_type?: "tithe" | "offering" | "other_income" | "expense";
+    status?: "draft" | "pending_approval" | "approved" | "posted" | "void";
+    from?: string;
+    to?: string;
+    category_id?: number;
+    party_id?: number;
+    q?: string;
+  }): FinanceTransaction[] => {
+    const where: string[] = [];
+    const params: unknown[] = [];
+
+    if (filters?.type) {
+      where.push("t.type = ?");
+      params.push(filters.type);
+    }
+    if (filters?.sub_type) {
+      where.push("t.sub_type = ?");
+      params.push(filters.sub_type);
+    }
+    if (filters?.status) {
+      where.push("t.status = ?");
+      params.push(filters.status);
+    }
+    if (filters?.from) {
+      where.push("date(t.txn_date) >= date(?)");
+      params.push(filters.from);
+    }
+    if (filters?.to) {
+      where.push("date(t.txn_date) <= date(?)");
+      params.push(filters.to);
+    }
+    if (filters?.category_id) {
+      where.push("t.category_id = ?");
+      params.push(filters.category_id);
+    }
+    if (filters?.party_id) {
+      where.push("t.party_id = ?");
+      params.push(filters.party_id);
+    }
+    if (filters?.q) {
+      where.push(
+        "(COALESCE(p.name, '') LIKE ? OR COALESCE(t.notes, '') LIKE ? OR COALESCE(t.reference_no, '') LIKE ?)",
+      );
+      const qTerm = `%${filters.q}%`;
+      params.push(qTerm, qTerm, qTerm);
+    }
+
+    const sql = `
+      SELECT t.*
+      FROM transactions t
+      LEFT JOIN parties p ON p.id = t.party_id
+      ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
+      ORDER BY t.txn_date DESC, t.id DESC
+    `;
+
+    return db.prepare(sql).all(...params) as FinanceTransaction[];
+  },
+
+  getById: (id: number): FinanceTransaction | undefined => {
+    return db.prepare("SELECT * FROM transactions WHERE id = ?").get(id) as
+      | FinanceTransaction
+      | undefined;
+  },
+
+  create: (data: {
+    type: "income" | "expense";
+    sub_type: "tithe" | "offering" | "other_income" | "expense";
+    party_id?: number | null;
+    category_id: number;
+    account_id?: number | null;
+    amount: number;
+    txn_date: string;
+    payment_method?: string;
+    service_label?: string;
+    reference_no?: string;
+    status?: "draft" | "pending_approval" | "approved" | "posted" | "void";
+    notes?: string;
+    created_by?: number | null;
+    approved_by?: number | null;
+    approved_at?: string | null;
+  }): FinanceTransaction => {
+    const now = new Date().toISOString();
+    const amount = Math.max(0, Math.round(data.amount || 0));
+    const status =
+      data.status ?? (data.type === "expense" ? "pending_approval" : "posted");
+    const result = db
+      .prepare(
+        `INSERT INTO transactions
+        (type, sub_type, party_id, category_id, account_id, amount, txn_date, payment_method, service_label, reference_no, status, notes, created_by, approved_by, approved_at, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        data.type,
+        data.sub_type,
+        data.party_id ?? null,
+        data.category_id,
+        data.account_id ?? null,
+        amount,
+        data.txn_date,
+        data.payment_method ?? null,
+        data.service_label ?? null,
+        data.reference_no ?? null,
+        status,
+        data.notes ?? null,
+        data.created_by ?? null,
+        data.approved_by ?? null,
+        data.approved_at ?? null,
+        now,
+        now,
+      );
+
+    return {
+      id: result.lastInsertRowid as number,
+      type: data.type,
+      sub_type: data.sub_type,
+      party_id: data.party_id ?? null,
+      category_id: data.category_id,
+      account_id: data.account_id ?? null,
+      amount,
+      txn_date: data.txn_date,
+      payment_method: data.payment_method,
+      service_label: data.service_label,
+      reference_no: data.reference_no,
+      status,
+      notes: data.notes,
+      created_by: data.created_by ?? null,
+      approved_by: data.approved_by ?? null,
+      approved_at: data.approved_at ?? null,
+      created_at: now,
+      updated_at: now,
+    };
+  },
+
+  update: (id: number, data: Partial<FinanceTransaction>): boolean => {
+    const existing = financeTransactionDb.getById(id);
+    if (!existing) return false;
+    const now = new Date().toISOString();
+    const updated = { ...existing, ...data };
+    const result = db
+      .prepare(
+        `UPDATE transactions
+         SET type = ?, sub_type = ?, party_id = ?, category_id = ?, account_id = ?, amount = ?, txn_date = ?, payment_method = ?, service_label = ?, reference_no = ?, status = ?, notes = ?, created_by = ?, approved_by = ?, approved_at = ?, updated_at = ?
+         WHERE id = ?`,
+      )
+      .run(
+        updated.type,
+        updated.sub_type,
+        updated.party_id ?? null,
+        updated.category_id,
+        updated.account_id ?? null,
+        Math.max(0, Math.round(updated.amount || 0)),
+        updated.txn_date,
+        updated.payment_method ?? null,
+        updated.service_label ?? null,
+        updated.reference_no ?? null,
+        updated.status,
+        updated.notes ?? null,
+        updated.created_by ?? null,
+        updated.approved_by ?? null,
+        updated.approved_at ?? null,
+        now,
+        id,
+      );
+    return result.changes > 0;
+  },
+
+  softVoid: (id: number): boolean => {
+    const now = new Date().toISOString();
+    const result = db
+      .prepare(
+        "UPDATE transactions SET status = 'void', updated_at = ? WHERE id = ?",
+      )
+      .run(now, id);
+    return result.changes > 0;
+  },
+
+  approve: (
+    id: number,
+    approvedBy?: number | null,
+    approvalNote?: string,
+  ): boolean => {
+    const existing = financeTransactionDb.getById(id);
+    if (!existing) return false;
+    const now = new Date().toISOString();
+    const noteLine = approvalNote?.trim()
+      ? `[APPROVAL ${new Date(now).toLocaleString("id-ID")}]: ${approvalNote.trim()}`
+      : "";
+    const mergedNotes = noteLine
+      ? existing.notes
+        ? `${existing.notes}\n${noteLine}`
+        : noteLine
+      : existing.notes;
+    const result = db
+      .prepare(
+        "UPDATE transactions SET status = 'approved', approved_by = ?, approved_at = ?, notes = ?, updated_at = ? WHERE id = ?",
+      )
+      .run(approvedBy ?? null, now, mergedNotes ?? null, now, id);
+    return result.changes > 0;
+  },
+
+  markPaid: (id: number): boolean => {
+    const now = new Date().toISOString();
+    const result = db
+      .prepare(
+        "UPDATE transactions SET status = 'posted', updated_at = ? WHERE id = ?",
+      )
+      .run(now, id);
+    return result.changes > 0;
+  },
+
+  getMonthlySummary: (
+    month: string,
+  ): {
+    month: string;
+    income_total: number;
+    expense_total: number;
+    net_total: number;
+    pending_approvals: number;
+    expense_by_category: Array<{ category: string; total: number }>;
+  } => {
+    const monthPattern = `${month}%`;
+    const incomeRow = db
+      .prepare(
+        "SELECT COALESCE(SUM(amount), 0) as total FROM transactions WHERE type = 'income' AND status != 'void' AND txn_date LIKE ?",
+      )
+      .get(monthPattern) as { total: number };
+    const expenseRow = db
+      .prepare(
+        "SELECT COALESCE(SUM(amount), 0) as total FROM transactions WHERE type = 'expense' AND status != 'void' AND txn_date LIKE ?",
+      )
+      .get(monthPattern) as { total: number };
+    const pendingRow = db
+      .prepare(
+        "SELECT COUNT(*) as count FROM transactions WHERE type = 'expense' AND status = 'pending_approval' AND txn_date LIKE ?",
+      )
+      .get(monthPattern) as { count: number };
+    const expenseByCategory = db
+      .prepare(
+        `SELECT c.name as category, COALESCE(SUM(t.amount), 0) as total
+         FROM transactions t
+         LEFT JOIN categories c ON c.id = t.category_id
+         WHERE t.type = 'expense' AND t.status != 'void' AND t.txn_date LIKE ?
+         GROUP BY t.category_id
+         ORDER BY total DESC`,
+      )
+      .all(monthPattern) as Array<{ category: string; total: number }>;
+
+    return {
+      month,
+      income_total: incomeRow.total,
+      expense_total: expenseRow.total,
+      net_total: incomeRow.total - expenseRow.total,
+      pending_approvals: pendingRow.count,
+      expense_by_category: expenseByCategory,
+    };
+  },
+
+  getCashflow: (params: {
+    date_from: string;
+    date_to: string;
+    group_by?: "day" | "week" | "month";
+  }): {
+    date_from: string;
+    date_to: string;
+    group_by: "day" | "week" | "month";
+    income_total: number;
+    expense_total: number;
+    net_total: number;
+    points: Array<{
+      period: string;
+      income_total: number;
+      expense_total: number;
+      net_total: number;
+      cumulative_net: number;
+    }>;
+  } => {
+    const groupBy = params.group_by ?? "day";
+    const rows = db
+      .prepare(
+        `SELECT txn_date, type, amount
+         FROM transactions
+         WHERE status != 'void'
+           AND txn_date BETWEEN ? AND ?
+         ORDER BY txn_date ASC, id ASC`,
+      )
+      .all(params.date_from, params.date_to) as Array<{
+      txn_date: string;
+      type: "income" | "expense";
+      amount: number;
+    }>;
+
+    const toDateKey = (d: Date): string => d.toISOString().slice(0, 10);
+    const bucketFor = (dateStr: string): string => {
+      if (groupBy === "day") return dateStr;
+      if (groupBy === "month") return dateStr.slice(0, 7);
+      const d = new Date(`${dateStr}T00:00:00.000Z`);
+      const weekdayFromMonday = (d.getUTCDay() + 6) % 7;
+      d.setUTCDate(d.getUTCDate() - weekdayFromMonday);
+      return toDateKey(d);
+    };
+
+    const buckets = new Map<
+      string,
+      {
+        period: string;
+        income_total: number;
+        expense_total: number;
+      }
+    >();
+    let incomeTotal = 0;
+    let expenseTotal = 0;
+
+    for (const row of rows) {
+      const period = bucketFor(row.txn_date);
+      let bucket = buckets.get(period);
+      if (!bucket) {
+        bucket = { period, income_total: 0, expense_total: 0 };
+        buckets.set(period, bucket);
+      }
+
+      if (row.type === "income") {
+        bucket.income_total += row.amount;
+        incomeTotal += row.amount;
+      } else if (row.type === "expense") {
+        bucket.expense_total += row.amount;
+        expenseTotal += row.amount;
+      }
+    }
+
+    const points = Array.from(buckets.values())
+      .sort((a, b) => a.period.localeCompare(b.period))
+      .map((item) => ({
+        period: item.period,
+        income_total: item.income_total,
+        expense_total: item.expense_total,
+        net_total: item.income_total - item.expense_total,
+        cumulative_net: 0,
+      }));
+
+    let runningNet = 0;
+    for (const point of points) {
+      runningNet += point.net_total;
+      point.cumulative_net = runningNet;
+    }
+
+    return {
+      date_from: params.date_from,
+      date_to: params.date_to,
+      group_by: groupBy,
+      income_total: incomeTotal,
+      expense_total: expenseTotal,
+      net_total: incomeTotal - expenseTotal,
+      points,
+    };
+  },
+
+  getAllocationSummary: (params: {
+    date_from: string;
+    date_to: string;
+    type?: "income" | "expense" | "all";
+  }): {
+    date_from: string;
+    date_to: string;
+    type: "income" | "expense" | "all";
+    grand_total: number;
+    groups: Array<{
+      destination: string;
+      total: number;
+      tx_count: number;
+      percent_of_total: number;
+      sub_breakdown: Array<{
+        sub_type: string;
+        total: number;
+        tx_count: number;
+      }>;
+    }>;
+  } => {
+    const type = params.type ?? "income";
+    const where: string[] = ["status != 'void'", "txn_date BETWEEN ? AND ?"];
+    const queryParams: Array<string> = [params.date_from, params.date_to];
+    if (type !== "all") {
+      where.push("type = ?");
+      queryParams.push(type);
+    }
+
+    const rows = db
+      .prepare(
+        `SELECT
+            COALESCE(NULLIF(TRIM(service_label), ''), 'Tanpa Tujuan') as destination,
+            sub_type,
+            amount
+         FROM transactions
+         WHERE ${where.join(" AND ")}
+         ORDER BY destination ASC`,
+      )
+      .all(...queryParams) as Array<{
+      destination: string;
+      sub_type: string;
+      amount: number;
+    }>;
+
+    const groupsMap = new Map<
+      string,
+      {
+        destination: string;
+        total: number;
+        tx_count: number;
+        subMap: Map<
+          string,
+          { sub_type: string; total: number; tx_count: number }
+        >;
+      }
+    >();
+    let grandTotal = 0;
+
+    for (const row of rows) {
+      grandTotal += row.amount;
+      let group = groupsMap.get(row.destination);
+      if (!group) {
+        group = {
+          destination: row.destination,
+          total: 0,
+          tx_count: 0,
+          subMap: new Map(),
+        };
+        groupsMap.set(row.destination, group);
+      }
+
+      group.total += row.amount;
+      group.tx_count += 1;
+
+      const subType = row.sub_type || "unknown";
+      const sub = group.subMap.get(subType) ?? {
+        sub_type: subType,
+        total: 0,
+        tx_count: 0,
+      };
+      sub.total += row.amount;
+      sub.tx_count += 1;
+      group.subMap.set(subType, sub);
+    }
+
+    const groups = Array.from(groupsMap.values())
+      .sort((a, b) => b.total - a.total)
+      .map((group) => ({
+        destination: group.destination,
+        total: group.total,
+        tx_count: group.tx_count,
+        percent_of_total:
+          grandTotal > 0
+            ? Number(((group.total / grandTotal) * 100).toFixed(2))
+            : 0,
+        sub_breakdown: Array.from(group.subMap.values()).sort(
+          (a, b) => b.total - a.total,
+        ),
+      }));
+
+    return {
+      date_from: params.date_from,
+      date_to: params.date_to,
+      type,
+      grand_total: grandTotal,
+      groups,
+    };
   },
 };
 
@@ -773,6 +1861,39 @@ if (recipientCount.count === 0) {
   setupFamilyGroups();
 
   console.log(`Seeded ${seedRecipients.length} recipients`);
+}
+
+// Seed default finance categories on first run
+const categoryCount = db
+  .prepare("SELECT COUNT(*) as count FROM categories")
+  .get() as { count: number };
+if (categoryCount.count === 0) {
+  const now = new Date().toISOString();
+  const defaults: Array<{ name: string; kind: "income" | "expense" }> = [
+    { name: "Persepuluhan", kind: "income" },
+    { name: "Persembahan", kind: "income" },
+    { name: "Donasi", kind: "income" },
+    { name: "Operasional Gereja", kind: "expense" },
+    { name: "Bantuan Sosial", kind: "expense" },
+    { name: "Kegiatan Pelayanan", kind: "expense" },
+  ];
+
+  const tx = db.transaction(() => {
+    for (const item of defaults) {
+      db.prepare(
+        "INSERT INTO categories (name, kind, parent_id, is_active, created_at, updated_at) VALUES (?, ?, NULL, 1, ?, ?)",
+      ).run(item.name, item.kind, now, now);
+    }
+  });
+  tx();
+}
+
+// Keep finance expense ledger aligned with batch transfer statuses.
+const batchIdsForSync = db.prepare("SELECT id FROM batches").all() as {
+  id: number;
+}[];
+for (const row of batchIdsForSync) {
+  syncBatchTransferExpense(row.id);
 }
 
 // Migrate existing base64 proofs to files

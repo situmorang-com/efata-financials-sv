@@ -61,6 +61,7 @@ export interface BatchItem {
   actual_account_number?: string;
   actual_account_holder?: string;
   family_group_id?: number | null;
+  transfer_fee: number;
 }
 
 export function calculateAmount(
@@ -78,4 +79,60 @@ export function calculateAmount(
         ? zoomFamilyRate
         : 0;
   return transport + zoom;
+}
+
+export interface FinanceCategory {
+  id?: number;
+  name: string;
+  kind: "income" | "expense";
+  parent_id?: number | null;
+  is_active: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface FinanceParty {
+  id?: number;
+  name: string;
+  party_type: "member" | "donor" | "vendor" | "other";
+  whatsapp?: string;
+  email?: string;
+  notes?: string;
+  is_active: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface FinanceAccount {
+  id?: number;
+  name: string;
+  account_type: "cash" | "bank" | "ewallet" | "other";
+  bank_name?: string;
+  account_number?: string;
+  holder_name?: string;
+  opening_balance: number;
+  is_active: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface FinanceTransaction {
+  id?: number;
+  type: "income" | "expense";
+  sub_type: "tithe" | "offering" | "other_income" | "expense";
+  party_id?: number | null;
+  category_id: number;
+  account_id?: number | null;
+  amount: number;
+  txn_date: string;
+  payment_method?: string;
+  service_label?: string;
+  reference_no?: string;
+  status: "draft" | "pending_approval" | "approved" | "posted" | "void";
+  notes?: string;
+  created_by?: number | null;
+  approved_by?: number | null;
+  approved_at?: string | null;
+  created_at: string;
+  updated_at: string;
 }
