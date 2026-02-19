@@ -1,4 +1,5 @@
 import { SvelteKitAuth } from "@auth/sveltekit";
+import type { HandleServerError } from "@sveltejs/kit";
 import Google from "@auth/core/providers/google";
 import { env } from "$env/dynamic/private";
 
@@ -50,3 +51,13 @@ export const { handle } = SvelteKitAuth({
     },
   },
 });
+
+export const handleError: HandleServerError = ({ error, event }) => {
+  console.error("Unhandled server error:", {
+    path: event.url.pathname,
+    message: error instanceof Error ? error.message : String(error),
+  });
+  return {
+    message: "Internal Server Error",
+  };
+};

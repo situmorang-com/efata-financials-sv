@@ -2,7 +2,12 @@ import { redirect } from "@sveltejs/kit";
 import type { PageServerLoad } from "./$types.js";
 
 export const load: PageServerLoad = async (event) => {
-  const session = await event.locals.auth();
+  let session = null;
+  try {
+    session = await event.locals.auth();
+  } catch (error) {
+    console.error("Failed to resolve auth session in root load:", error);
+  }
 
   // If not authenticated, redirect to Auth.js default signin
   if (!session?.user) {
