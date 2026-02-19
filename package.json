@@ -8,12 +8,16 @@
     "build": "vite build",
     "preview": "vite preview",
     "prepare": "svelte-kit sync || echo ''",
+    "postinstall": "node scripts/postinstall.js",
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
-    "check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch"
+    "check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
+    "seed:finance-dummy": "node scripts/seed-finance-dummy.mjs",
+    "generate-secret": "node scripts/generate-secret.js",
+    "clean": "rm -rf .svelte-kit node_modules/.vite"
   },
   "devDependencies": {
     "@lucide/svelte": "^0.515.0",
-    "@sveltejs/adapter-auto": "^6.0.0",
+    "@sveltejs/adapter-node": "^5.0.0",
     "@sveltejs/kit": "^2.22.0",
     "@sveltejs/vite-plugin-svelte": "^6.0.0",
     "@tailwindcss/postcss": "^4.1.12",
@@ -28,6 +32,8 @@
     "vite": "^7.0.4"
   },
   "dependencies": {
+    "@auth/core": "^0.35.0",
+    "@auth/sveltekit": "^1.4.0",
     "@types/better-sqlite3": "^7.6.13",
     "better-sqlite3": "^12.2.0",
     "clsx": "^2.1.1",
