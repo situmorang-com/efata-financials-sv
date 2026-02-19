@@ -1,27 +1,32 @@
 <script lang="ts">
 	import { page } from '$app/stores';
 	import { browser } from '$app/environment';
+	import { signOut } from '@auth/sveltekit/client';
 	import '../app.css';
 	import Toast from '$lib/components/Toast.svelte';
 	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
-	import LayoutDashboard from '@lucide/svelte/icons/layout-dashboard';
 	import Layers from '@lucide/svelte/icons/layers';
 	import Users from '@lucide/svelte/icons/users';
+	import Landmark from '@lucide/svelte/icons/landmark';
 	import Menu from '@lucide/svelte/icons/menu';
 	import X from '@lucide/svelte/icons/x';
 	import Sun from '@lucide/svelte/icons/sun';
 	import Moon from '@lucide/svelte/icons/moon';
+	import LogOut from '@lucide/svelte/icons/log-out';
+	import User from '@lucide/svelte/icons/user';
 
-	let { children } = $props();
+	let { children, data } = $props();
 	let pathname = $derived($page.url.pathname);
 	let mobileMenuOpen = $state(false);
 	let themePreference = $state<'dark' | 'light'>('dark');
 	let themeReady = $state(false);
 	let appliedTheme = $derived(themePreference);
 	let isLight = $derived(appliedTheme === 'light');
+	let session = $derived(data.session);
+	let isAuthPage = $derived(pathname.startsWith('/auth/'));
 
 	const navItems = [
-		{ href: '/', label: 'Dashboard', icon: LayoutDashboard },
+		{ href: '/finance', label: 'Finance', icon: Landmark },
 		{ href: '/batches', label: 'Batches', icon: Layers },
 		{ href: '/recipients', label: 'Recipients', icon: Users }
 	];
@@ -33,6 +38,10 @@
 
 	function setThemePreference(next: 'dark' | 'light') {
 		themePreference = next;
+	}
+
+	async function handleSignOut() {
+		await signOut({ callbackUrl: '/auth/signin' });
 	}
 
 	// Close mobile menu on navigation
@@ -70,7 +79,7 @@
 	<nav class="relative z-20">
 		<div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
 			<div class="h-16 flex items-center justify-between">
-				<a href="/" class="flex items-center gap-3 text-white font-semibold tracking-wide">
+				<a href="/finance" class="flex items-center gap-3 text-white font-semibold tracking-wide">
 					<span class="w-8 h-8 rounded-xl bg-emerald-400/20 border border-emerald-300/30 flex items-center justify-center text-emerald-200 text-xs">EF</span>
 					<span class="glow-text">EFATA Transfer</span>
 				</a>
@@ -96,6 +105,7 @@
 							Dark
 						</button>
 					</div>
+					{#if !isAuthPage}
 					<div class="flex items-center gap-1 glass-dark rounded-full px-2 py-1">
 					{#each navItems as item}
 						<a
@@ -107,6 +117,23 @@
 						</a>
 					{/each}
 					</div>
+					{#if session?.user}
+					<div class="flex items-center gap-1 glass-dark rounded-full px-2 py-1">
+						<div class="nav-pill flex items-center gap-1.5 cursor-default">
+							<User class="w-3.5 h-3.5" />
+							<span class="text-xs max-w-32 truncate">{session.user.email}</span>
+						</div>
+						<button
+							type="button"
+							onclick={handleSignOut}
+							class="nav-pill flex items-center gap-1.5 text-red-400 hover:text-red-300"
+							title="Sign out"
+						>
+							<LogOut class="w-3.5 h-3.5" />
+						</button>
+					</div>
+					{/if}
+					{/if}
 				</div>
 				<!-- Mobile hamburger -->
 				<button
@@ -131,7 +158,7 @@
 			<!-- Drawer -->
 			<nav class="absolute left-0 top-0 bottom-0 w-72 glass-dark border-r border-white/10 mobile-drawer-enter flex flex-col">
 				<div class="h-16 flex items-center justify-between px-5">
-					<a href="/" class="flex items-center gap-3 text-white font-semibold tracking-wide">
+					<a href="/finance" class="flex items-center gap-3 text-white font-semibold tracking-wide">
 						<span class="w-8 h-8 rounded-xl bg-emerald-400/20 border border-emerald-300/30 flex items-center justify-center text-emerald-200 text-xs">EF</span>
 						<span class="glow-text text-sm">EFATA Transfer</span>
 					</a>
@@ -162,6 +189,7 @@
 							</button>
 						</div>
 					</div>
+					{#if !isAuthPage}
 					{#each navItems as item}
 						<a
 							href={item.href}
@@ -175,6 +203,25 @@
 							{item.label}
 						</a>
 					{/each}
+					{#if session?.user}
+					<div class="mt-4 pt-4 border-t border-white/10">
+						<div class="glass rounded-xl p-3 mb-2">
+							<div class="flex items-center gap-2 text-white/90">
+								<User class="w-4 h-4" />
+								<span class="text-xs truncate">{session.user.email}</span>
+							</div>
+						</div>
+						<button
+							type="button"
+							onclick={handleSignOut}
+							class="flex items-center gap-3 px-4 py-3 rounded-xl text-sm transition-all w-full text-red-400 hover:bg-red-500/10 border border-transparent hover:border-red-500/25"
+						>
+							<LogOut class="w-4.5 h-4.5" />
+							Sign Out
+						</button>
+					</div>
+					{/if}
+					{/if}
 				</div>
 			</nav>
 		</div>
