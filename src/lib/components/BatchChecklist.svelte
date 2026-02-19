@@ -64,6 +64,65 @@
 		})
 	);
 
+	async function updatePaymentMethod(item: BatchItem, method: 'transfer' | 'cash') {
+		const prevMethod = item.payment_method;
+		const prevFee = item.transfer_fee;
+		item.payment_method = method;
+		if (method === 'cash') {
+			item.transfer_fee = 0;
+		}
+		try {
+			await fetch(`/api/batches/${batchId}/items/${item.id}`, {
+				method: 'PUT',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					payment_method: method,
+					transfer_fee: method === 'cash' ? 0 : item.transfer_fee
+				})
+			});
+		} catch (e) {
+			item.payment_method = prevMethod;
+			item.transfer_fee = prevFee;
+			console.error('Failed to update payment method:', e);
+			addToast('Gagal mengubah metode pembayaran', 'error');
+		}
+	}
+
+	async function toggleCashPaid(item: BatchItem) {
+		const nextStatus: 'pending' | 'done' = item.transfer_status === 'done' ? 'pending' : 'done';
+		const nextTransferAt = nextStatus === 'done' ? new Date().toISOString() : null;
+		const nextNotifyStatus = nextStatus === 'pending' ? 'pending' : item.notify_status;
+		try {
+			await fetch(`/api/batches/${batchId}/items/${item.id}`, {
+				method: 'PUT',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					payment_method: 'cash',
+					transfer_status: nextStatus,
+					transfer_at: nextTransferAt,
+					notify_status: nextNotifyStatus
+				})
+			});
+			item.payment_method = 'cash';
+			item.transfer_status = nextStatus;
+			item.transfer_at = nextTransferAt || undefined;
+			if (nextStatus === 'pending') {
+				item.notify_status = 'pending';
+			}
+			addToast(
+				nextStatus === 'done'
+					? `Cash ${item.recipient_name} ditandai lunas`
+					: `Status cash ${item.recipient_name} dibatalkan`,
+				nextStatus === 'done' ? 'success' : 'info'
+			);
+			await autoSkipMissingWhatsapp();
+			await maybeCompleteBatch();
+		} catch (e) {
+			console.error('Failed to toggle cash paid:', e);
+			addToast('Gagal mengubah status pembayaran cash', 'error');
+		}
+	}
+
 	async function loadData() {
 		try {
 			const [batchRes, itemsRes] = await Promise.all([
@@ -441,7 +500,7 @@
 							{pendingTransferCount === 0 ? 'opacity-50 cursor-not-allowed' : 'bg-emerald-500/20 hover:bg-emerald-500/40'}"
 					>
 						<CheckCheck class="w-4 h-4" />
-						Tandai Semua Transfer
+						Tandai Semua Lunas
 					</button>
 				</div>
 			</div>
@@ -549,6 +608,7 @@
 									<th class="text-center px-3 py-3 table-head-cell">Zoom</th>
 								{/if}
 								<th class="text-right px-3 py-3 table-head-cell">Total</th>
+								<th class="text-center px-3 py-3 table-head-cell">Metode</th>
 								<th class="text-right px-3 py-3 table-head-cell">Biaya TF</th>
 								<th class="text-left px-3 py-3 table-head-cell">Tgl TF</th>
 								<th class="text-center px-3 py-3 table-head-cell w-12">TF</th>
@@ -616,20 +676,38 @@
 											</span>
 										{/if}
 									</td>
+									<td class="px-3 py-2.5 text-center">
+										<select
+											class="glass-input rounded-lg px-2 py-1 text-xs text-white/90"
+											value={item.payment_method || 'transfer'}
+											onchange={(e) =>
+												updatePaymentMethod(
+													item,
+													((e.target as HTMLSelectElement).value === 'cash' ? 'cash' : 'transfer')
+												)}
+										>
+											<option value="transfer">Transfer</option>
+											<option value="cash">Cash</option>
+										</select>
+									</td>
 									<td class="px-3 py-2.5 text-right">
-									<input
-										type="text"
-										inputmode="numeric"
-										class="glass-input rounded-lg px-2 py-1 text-xs text-white/90 w-[110px] text-right"
-										value={formatCurrencyInput(item.transfer_fee || 0)}
-										onfocus={(e) => { (e.target as HTMLInputElement).value = String(item.transfer_fee || 0); }}
-										onblur={(e) => {
-											const parsed = parseCurrencyInput((e.target as HTMLInputElement).value);
-											updateTransferFee(item, parsed);
-											(e.target as HTMLInputElement).value = formatCurrencyInput(parsed);
-										}}
-									/>
-								</td>
+										{#if item.payment_method === 'cash'}
+											<span class="text-white/30 text-xs">-</span>
+										{:else}
+											<input
+												type="text"
+												inputmode="numeric"
+												class="glass-input rounded-lg px-2 py-1 text-xs text-white/90 w-[110px] text-right"
+												value={formatCurrencyInput(item.transfer_fee || 0)}
+												onfocus={(e) => { (e.target as HTMLInputElement).value = String(item.transfer_fee || 0); }}
+												onblur={(e) => {
+													const parsed = parseCurrencyInput((e.target as HTMLInputElement).value);
+													updateTransferFee(item, parsed);
+													(e.target as HTMLInputElement).value = formatCurrencyInput(parsed);
+												}}
+											/>
+										{/if}
+									</td>
 									<td class="px-3 py-2.5">
 										{#if item.transfer_status === 'done'}
 											<input
@@ -643,14 +721,28 @@
 										{/if}
 									</td>
 									<td class="px-3 py-2.5">
-										<TransferProof
-											itemId={item.id!}
-											{batchId}
-											transferStatus={item.transfer_status}
-											hasProof={!!item.has_transfer_proof}
-											recipientName={item.recipient_name || ''}
-											onStatusChange={(s, p) => handleTransferChange(item, s, p)}
-										/>
+										{#if item.payment_method === 'cash'}
+											<button
+												type="button"
+												onclick={() => toggleCashPaid(item)}
+												class="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium transition-all
+													{item.transfer_status === 'done'
+														? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 hover:bg-emerald-500/30'
+														: 'bg-white/5 text-white/50 border border-white/15 hover:border-white/30'}"
+											>
+												<Banknote class="w-3.5 h-3.5" />
+												{item.transfer_status === 'done' ? 'Cash' : 'Bayar'}
+											</button>
+										{:else}
+											<TransferProof
+												itemId={item.id!}
+												{batchId}
+												transferStatus={item.transfer_status}
+												hasProof={!!item.has_transfer_proof}
+												recipientName={item.recipient_name || ''}
+												onStatusChange={(s, p) => handleTransferChange(item, s, p)}
+											/>
+										{/if}
 									</td>
 									<td class="px-3 py-2.5 text-center">
 										<WhatsAppButton
@@ -725,18 +817,38 @@
 						<!-- Transfer fee (mobile) -->
 						<div class="mt-2 ml-5 flex items-center justify-between">
 							<span class="text-white/40 text-xs">Biaya TF</span>
-							<input
-								type="text"
-								inputmode="numeric"
-								class="glass-input rounded-lg px-2 py-1 text-xs text-white/90 w-[110px] text-right"
-								value={formatCurrencyInput(item.transfer_fee || 0)}
-								onfocus={(e) => { (e.target as HTMLInputElement).value = String(item.transfer_fee || 0); }}
-								onblur={(e) => {
-									const parsed = parseCurrencyInput((e.target as HTMLInputElement).value);
-									updateTransferFee(item, parsed);
-									(e.target as HTMLInputElement).value = formatCurrencyInput(parsed);
-								}}
-							/>
+							{#if item.payment_method === 'cash'}
+								<span class="text-white/30 text-xs">-</span>
+							{:else}
+								<input
+									type="text"
+									inputmode="numeric"
+									class="glass-input rounded-lg px-2 py-1 text-xs text-white/90 w-[110px] text-right"
+									value={formatCurrencyInput(item.transfer_fee || 0)}
+									onfocus={(e) => { (e.target as HTMLInputElement).value = String(item.transfer_fee || 0); }}
+									onblur={(e) => {
+										const parsed = parseCurrencyInput((e.target as HTMLInputElement).value);
+										updateTransferFee(item, parsed);
+										(e.target as HTMLInputElement).value = formatCurrencyInput(parsed);
+									}}
+								/>
+							{/if}
+						</div>
+
+						<div class="mt-2 ml-5 flex items-center justify-between">
+							<span class="text-white/40 text-xs">Metode</span>
+							<select
+								class="glass-input rounded-lg px-2 py-1 text-xs text-white/90"
+								value={item.payment_method || 'transfer'}
+								onchange={(e) =>
+									updatePaymentMethod(
+										item,
+										((e.target as HTMLSelectElement).value === 'cash' ? 'cash' : 'transfer')
+									)}
+							>
+								<option value="transfer">Transfer</option>
+								<option value="cash">Cash</option>
+							</select>
 						</div>
 
 						{#if !isSpecial}
@@ -764,14 +876,28 @@
 
 						<!-- Actions -->
 						<div class="flex items-center gap-2 mt-3 pt-3 border-t border-white/[0.06]">
-							<TransferProof
-								itemId={item.id!}
-								{batchId}
-								transferStatus={item.transfer_status}
-								hasProof={!!item.has_transfer_proof}
-								recipientName={item.recipient_name || ''}
-								onStatusChange={(s, p) => handleTransferChange(item, s, p)}
-							/>
+							{#if item.payment_method === 'cash'}
+								<button
+									type="button"
+									onclick={() => toggleCashPaid(item)}
+									class="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium transition-all
+										{item.transfer_status === 'done'
+											? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 hover:bg-emerald-500/30'
+											: 'bg-white/5 text-white/50 border border-white/15 hover:border-white/30'}"
+								>
+									<Banknote class="w-3.5 h-3.5" />
+									{item.transfer_status === 'done' ? 'Cash' : 'Bayar'}
+								</button>
+							{:else}
+								<TransferProof
+									itemId={item.id!}
+									{batchId}
+									transferStatus={item.transfer_status}
+									hasProof={!!item.has_transfer_proof}
+									recipientName={item.recipient_name || ''}
+									onStatusChange={(s, p) => handleTransferChange(item, s, p)}
+								/>
+							{/if}
 							{#if item.transfer_status === 'done'}
 								<input
 									type="date"
