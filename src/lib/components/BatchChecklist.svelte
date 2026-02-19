@@ -139,12 +139,21 @@
 				fetch(`/api/batches/${batchId}`),
 				fetch(`/api/batches/${batchId}/items`)
 			]);
-			batch = await batchRes.json();
-			items = await itemsRes.json();
+			const batchPayload = await batchRes.json();
+			const itemsPayload = await itemsRes.json();
+			if (!batchRes.ok) {
+				throw new Error(batchPayload?.error || 'Failed to load batch');
+			}
+			if (!itemsRes.ok) {
+				throw new Error(itemsPayload?.error || 'Failed to load batch items');
+			}
+			batch = batchPayload as Batch;
+			items = Array.isArray(itemsPayload) ? (itemsPayload as BatchItem[]) : [];
 			await autoSkipMissingWhatsapp();
 			await maybeCompleteBatch();
 		} catch (e) {
 			console.error('Failed to load batch data:', e);
+			addToast(e instanceof Error ? e.message : 'Gagal memuat data batch', 'error');
 		} finally {
 			loading = false;
 		}

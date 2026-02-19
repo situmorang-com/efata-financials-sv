@@ -69,7 +69,14 @@
 	async function loadBatches() {
 		try {
 			const res = await fetch('/api/batches');
-			batches = await res.json();
+			const payload = await res.json();
+			if (!res.ok) {
+				throw new Error(payload?.error || 'Failed to load batches');
+			}
+			if (!Array.isArray(payload)) {
+				throw new Error('Invalid batches payload');
+			}
+			batches = payload as Batch[];
 			const details = await Promise.all(
 				batches
 					.filter(b => b.id)
