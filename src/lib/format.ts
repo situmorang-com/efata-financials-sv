@@ -1,5 +1,6 @@
-export function formatRupiah(amount: number): string {
-	return 'Rp ' + amount.toLocaleString('id-ID');
+export function formatRupiah(amount: number | null | undefined): string {
+	const safe = Number.isFinite(Number(amount)) ? Number(amount) : 0;
+	return 'Rp ' + safe.toLocaleString('id-ID');
 }
 
 export function cleanPhoneForWhatsApp(phone: string): string {
