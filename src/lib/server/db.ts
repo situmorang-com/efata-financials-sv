@@ -306,6 +306,19 @@ if (!columnExists("batch_items", "payment_method")) {
     "ALTER TABLE batch_items ADD COLUMN payment_method TEXT NOT NULL DEFAULT 'transfer'",
   );
 }
+db.exec(`
+  UPDATE batch_items
+  SET payment_method = CASE
+    WHEN lower(trim(COALESCE(payment_method, ''))) = 'cash' THEN 'cash'
+    ELSE 'transfer'
+  END
+`);
+
+function normalizeBatchPaymentMethod(value?: string | null): "transfer" | "cash" {
+  return String(value || "").trim().toLowerCase() === "cash"
+    ? "cash"
+    : "transfer";
+}
 
 // --- Prepared statements - Recipients ---
 const insertRecipient = db.prepare(`
@@ -823,11 +836,19 @@ function voidBatchTransferExpense(batchId: number): void {
 
 export const batchItemDb = {
   getByBatchId: (batchId: number): BatchItem[] => {
-    return selectBatchItems.all(batchId) as BatchItem[];
+    return (selectBatchItems.all(batchId) as BatchItem[]).map((item) => ({
+      ...item,
+      payment_method: normalizeBatchPaymentMethod(item.payment_method),
+    }));
   },
 
   getById: (id: number): BatchItem | undefined => {
-    return selectBatchItemById.get(id) as BatchItem | undefined;
+    const item = selectBatchItemById.get(id) as BatchItem | undefined;
+    if (!item) return undefined;
+    return {
+      ...item,
+      payment_method: normalizeBatchPaymentMethod(item.payment_method),
+    };
   },
 
   create: (
@@ -873,19 +894,23 @@ export const batchItemDb = {
     if (!existing) return false;
     const now = new Date().toISOString();
     const updated = { ...existing, ...data };
-    if (updated.payment_method === "cash") {
+    const normalizedPaymentMethod = normalizeBatchPaymentMethod(
+      updated.payment_method,
+    );
+    updated.payment_method = normalizedPaymentMethod;
+    if (normalizedPaymentMethod === "cash") {
       updated.transfer_fee = 0;
       updated.transfer_proof = null;
     }
     const proofValue =
-      updated.payment_method === "cash"
+      normalizedPaymentMethod === "cash"
         ? null
         : data.transfer_proof !== undefined
           ? updated.transfer_proof
           : (existing.transfer_proof ?? null);
     const result = updateBatchItem.run(
       updated.amount,
-      updated.payment_method ?? "transfer",
+      normalizedPaymentMethod,
       updated.saturdays_attended,
       updated.zoom_type,
       updated.transfer_fee ?? 0,
