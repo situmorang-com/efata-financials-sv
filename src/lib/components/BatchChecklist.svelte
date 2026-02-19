@@ -37,6 +37,14 @@
 	let downloading = $state(false);
 	let isSpecial = $derived(batch?.type === 'special');
 
+	function normalizePaymentMethod(value?: string | null): 'transfer' | 'cash' {
+		return String(value || '').trim().toLowerCase() === 'cash' ? 'cash' : 'transfer';
+	}
+
+	function isCash(item: BatchItem): boolean {
+		return normalizePaymentMethod(item.payment_method) === 'cash';
+	}
+
 	let transferredCount = $derived(items.filter(i => i.transfer_status === 'done').length);
 	let notifiedCount = $derived(items.filter(i => i.notify_status === 'sent').length);
 	let skippedNotifyCount = $derived(items.filter(i => i.notify_status === 'skipped').length);
@@ -45,17 +53,17 @@
 	let grandTotal = $derived(totalAmount + totalTransferFee);
 	let transferAmountPaidTotal = $derived(
 		items
-			.filter((i) => (i.payment_method || 'transfer') === 'transfer' && i.transfer_status === 'done')
+			.filter((i) => !isCash(i) && i.transfer_status === 'done')
 			.reduce((sum, i) => sum + i.amount, 0)
 	);
 	let transferFeePaidTotal = $derived(
 		items
-			.filter((i) => (i.payment_method || 'transfer') === 'transfer' && i.transfer_status === 'done')
+			.filter((i) => !isCash(i) && i.transfer_status === 'done')
 			.reduce((sum, i) => sum + (i.transfer_fee || 0), 0)
 	);
 	let cashPaidTotal = $derived(
 		items
-			.filter((i) => (i.payment_method || 'transfer') === 'cash' && i.transfer_status === 'done')
+			.filter((i) => isCash(i) && i.transfer_status === 'done')
 			.reduce((sum, i) => sum + i.amount, 0)
 	);
 	let totalPaidSummary = $derived(transferAmountPaidTotal + transferFeePaidTotal + cashPaidTotal);
@@ -154,7 +162,12 @@
 				throw new Error(itemsPayload?.error || 'Failed to load batch items');
 			}
 			batch = batchPayload as Batch;
-			items = Array.isArray(itemsPayload) ? (itemsPayload as BatchItem[]) : [];
+			items = Array.isArray(itemsPayload)
+				? (itemsPayload as BatchItem[]).map((item) => ({
+					...item,
+					payment_method: normalizePaymentMethod(item.payment_method)
+				}))
+				: [];
 			await autoSkipMissingWhatsapp();
 			await maybeCompleteBatch();
 		} catch (e) {
@@ -420,7 +433,7 @@
 
 	function getRowClass(item: BatchItem): string {
 		if (item.transfer_status === 'done' && item.notify_status === 'sent') return 'row-completed';
-		if ((item.payment_method || 'transfer') === 'cash') return 'row-cash';
+		if (isCash(item)) return 'row-cash';
 		if (item.transfer_status === 'done') return 'row-transferred';
 		return 'glass-table-row';
 	}
@@ -726,7 +739,7 @@
 									<td class="px-3 py-2.5 text-center">
 										<select
 											class="glass-input rounded-lg px-2 py-1 text-xs text-white/90"
-											value={item.payment_method || 'transfer'}
+											value={normalizePaymentMethod(item.payment_method)}
 											onchange={(e) =>
 												updatePaymentMethod(
 													item,
@@ -738,7 +751,7 @@
 										</select>
 									</td>
 									<td class="px-3 py-2.5 text-right">
-										{#if item.payment_method === 'cash'}
+										{#if isCash(item)}
 											<span class="text-white/30 text-xs">-</span>
 										{:else}
 											<input
@@ -768,7 +781,7 @@
 										{/if}
 									</td>
 									<td class="px-3 py-2.5">
-										{#if item.payment_method === 'cash'}
+										{#if isCash(item)}
 											<button
 												type="button"
 												onclick={() => toggleCashPaid(item)}
@@ -818,7 +831,7 @@
 			<!-- Mobile Card View (hidden on desktop) -->
 			<div class="lg:hidden space-y-3 fade-up">
 				{#each visibleItems as item, i}
-					<div class="glass-card rounded-xl p-4 {item.transfer_status === 'done' && item.notify_status === 'sent' ? 'border-l-4 border-l-emerald-500/50' : (item.payment_method || 'transfer') === 'cash' ? 'border-l-4 border-l-sky-400/60' : item.transfer_status === 'done' ? 'border-l-4 border-l-amber-500/50' : ''}">
+					<div class="glass-card rounded-xl p-4 {item.transfer_status === 'done' && item.notify_status === 'sent' ? 'border-l-4 border-l-emerald-500/50' : isCash(item) ? 'border-l-4 border-l-sky-400/60' : item.transfer_status === 'done' ? 'border-l-4 border-l-amber-500/50' : ''}">
 						<div class="flex justify-between items-start gap-3">
 							<div class="flex-1 min-w-0">
 								<div class="flex items-center gap-2">
@@ -864,7 +877,7 @@
 						<!-- Transfer fee (mobile) -->
 						<div class="mt-2 ml-5 flex items-center justify-between">
 							<span class="text-white/40 text-xs">Biaya TF</span>
-							{#if item.payment_method === 'cash'}
+							{#if isCash(item)}
 								<span class="text-white/30 text-xs">-</span>
 							{:else}
 								<input
@@ -886,7 +899,7 @@
 							<span class="text-white/40 text-xs">Metode</span>
 							<select
 								class="glass-input rounded-lg px-2 py-1 text-xs text-white/90"
-								value={item.payment_method || 'transfer'}
+								value={normalizePaymentMethod(item.payment_method)}
 								onchange={(e) =>
 									updatePaymentMethod(
 										item,
@@ -923,7 +936,7 @@
 
 						<!-- Actions -->
 						<div class="flex items-center gap-2 mt-3 pt-3 border-t border-white/[0.06]">
-							{#if item.payment_method === 'cash'}
+							{#if isCash(item)}
 								<button
 									type="button"
 									onclick={() => toggleCashPaid(item)}
