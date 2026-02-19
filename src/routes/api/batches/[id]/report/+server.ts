@@ -161,21 +161,29 @@ export const GET: RequestHandler = async ({ params }) => {
         label: "Transfer Amount",
         value: formatRupiah(transferAmountTotal),
         color: rgb(0.86, 0.96, 0.91),
+        accent: rgb(0.12, 0.62, 0.36),
+        badge: "TR",
       },
       {
         label: "Transfer Fee",
         value: formatRupiah(transferFeeTotal),
         color: rgb(0.92, 0.91, 0.98),
+        accent: rgb(0.45, 0.36, 0.8),
+        badge: "FEE",
       },
       {
         label: "Cash Paid",
         value: formatRupiah(cashTotal),
         color: rgb(0.99, 0.95, 0.88),
+        accent: rgb(0.78, 0.54, 0.14),
+        badge: "CSH",
       },
       {
         label: "Total Paid",
         value: formatRupiah(totalPaid),
         color: rgb(0.89, 0.95, 0.99),
+        accent: rgb(0.18, 0.48, 0.76),
+        badge: "TOT",
       },
     ];
     cards.forEach((card, i) => {
@@ -192,8 +200,22 @@ export const GET: RequestHandler = async ({ params }) => {
         borderColor: rgb(0.84, 0.9, 0.93),
         borderWidth: 1,
       });
-      drawText(card.label, x + 12, cy - 18, 9, false, rgb(0.22, 0.26, 0.28));
-      drawText(card.value, x + 12, cy - 41, 14, true, rgb(0.07, 0.2, 0.22));
+      page.drawRectangle({
+        x,
+        y: cy - 3,
+        width: cardW,
+        height: 3,
+        color: card.accent,
+      });
+      page.drawCircle({
+        x: x + 17,
+        y: cy - 19,
+        size: 9,
+        color: card.accent,
+      });
+      drawText(card.badge, x + 11.5, cy - 21.3, 6.5, true, rgb(1, 1, 1));
+      drawText(card.label, x + 33, cy - 18, 9, false, rgb(0.22, 0.26, 0.28));
+      drawText(card.value, x + 12, cy - 43, 14, true, rgb(0.07, 0.2, 0.22));
     });
     y -= cardH * 2 + 20;
 
