@@ -944,38 +944,40 @@
 						{/if}
 
 						<!-- Actions -->
-						<div class="flex items-center gap-2 mt-3 pt-3 border-t border-white/[0.06]">
-							{#if isCash(item)}
-								<button
-									type="button"
-									onclick={() => toggleCashPaid(item)}
-									class="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium transition-all
-										{item.transfer_status === 'done'
-											? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 hover:bg-emerald-500/30'
-											: 'bg-white/5 text-white/50 border border-white/15 hover:border-white/30'}"
-								>
-									<Banknote class="w-3.5 h-3.5" />
-									{item.transfer_status === 'done' ? 'Cash' : 'Bayar'}
-								</button>
-							{:else}
-								<TransferProof
-									itemId={item.id!}
-									{batchId}
-									transferStatus={item.transfer_status}
-									hasProof={!!item.has_transfer_proof}
-									recipientName={item.recipient_name || ''}
-									onStatusChange={(s, p) => handleTransferChange(item, s, p)}
-								/>
-							{/if}
-							{#if item.transfer_status === 'done'}
-								<input
-									type="date"
-									class="glass-input rounded-lg px-2 py-1 text-xs text-white/80"
-									value={formatDateInput(item.transfer_at)}
-									onchange={(e) => updateTransferDate(item, (e.target as HTMLInputElement).value)}
-								/>
-							{/if}
-							<div class="ml-auto">
+						<div class="mt-3 pt-3 border-t border-white/[0.06]">
+							<div class="flex items-center gap-2 flex-wrap">
+								{#if isCash(item)}
+									<button
+										type="button"
+										onclick={() => toggleCashPaid(item)}
+										class="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium transition-all
+											{item.transfer_status === 'done'
+												? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 hover:bg-emerald-500/30'
+												: 'bg-white/5 text-white/50 border border-white/15 hover:border-white/30'}"
+									>
+										<Banknote class="w-3.5 h-3.5" />
+										{item.transfer_status === 'done' ? 'Cash' : 'Bayar'}
+									</button>
+								{:else}
+									<TransferProof
+										itemId={item.id!}
+										{batchId}
+										transferStatus={item.transfer_status}
+										hasProof={!!item.has_transfer_proof}
+										recipientName={item.recipient_name || ''}
+										onStatusChange={(s, p) => handleTransferChange(item, s, p)}
+									/>
+								{/if}
+								{#if item.transfer_status === 'done'}
+									<input
+										type="date"
+										class="glass-input rounded-lg px-2 py-1 text-xs text-white/80"
+										value={formatDateInput(item.transfer_at)}
+										onchange={(e) => updateTransferDate(item, (e.target as HTMLInputElement).value)}
+									/>
+								{/if}
+							</div>
+							<div class="mt-2 flex justify-end">
 								<WhatsAppButton
 									phone={item.whatsapp || ''}
 									name={item.recipient_name || ''}
