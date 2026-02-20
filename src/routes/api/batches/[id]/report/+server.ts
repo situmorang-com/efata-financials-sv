@@ -249,14 +249,29 @@ export const GET: RequestHandler = async ({ params }) => {
       "Status",
       "Tgl",
     ];
-    // Compact widths so the right-most date column stays inside A4 page bounds.
-    const colWidths = [18, 108, 118, 46, 64, 50, 42, 46];
+    // Slightly rebalance widths to improve readability between Metode and Jumlah.
+    const colWidths = [18, 100, 110, 58, 76, 54, 42, 52];
     const colXs: number[] = [];
     let cursor = margin + 6;
     for (const w of colWidths) {
       colXs.push(cursor);
       cursor += w;
     }
+    const methodDividerX = colXs[3] + colWidths[3] - 4;
+
+    const drawCellRight = (
+      text: string,
+      colIndex: number,
+      textY: number,
+      size = 8,
+      bold = false,
+      color = rgb(0.16, 0.18, 0.2),
+    ) => {
+      const activeFont = bold ? fontBold : font;
+      const textWidth = activeFont.widthOfTextAtSize(text, size);
+      const x = colXs[colIndex] + colWidths[colIndex] - textWidth - 4;
+      drawText(text, x, textY, size, bold, color);
+    };
 
     const drawTableHeader = () => {
       if (y < margin + 120) addPage();
@@ -270,6 +285,12 @@ export const GET: RequestHandler = async ({ params }) => {
       headers.forEach((h, i) =>
         drawText(h, colXs[i], y - 14, 8, true, rgb(0.18, 0.24, 0.26)),
       );
+      page.drawLine({
+        start: { x: methodDividerX, y: y - 20 },
+        end: { x: methodDividerX, y },
+        thickness: 0.8,
+        color: rgb(0.8, 0.86, 0.9),
+      });
       y -= 20;
     };
 
@@ -301,16 +322,42 @@ export const GET: RequestHandler = async ({ params }) => {
       drawText(String(i + 1), colXs[0], y - 12, 8);
       drawText(clip(item.recipient_name || "-", 21), colXs[1], y - 12, 8);
       drawText(clip(rekening, 25), colXs[2], y - 12, 8);
-      drawText(method.toUpperCase(), colXs[3], y - 12, 8);
-      drawText(formatRupiah(item.amount || 0), colXs[4], y - 12, 8);
+      const chipX = colXs[3] + 1;
+      const chipY = y - 15;
+      const chipW = 48;
+      const chipH = 12;
+      page.drawRectangle({
+        x: chipX,
+        y: chipY,
+        width: chipW,
+        height: chipH,
+        color: method === "cash" ? rgb(0.99, 0.95, 0.88) : rgb(0.91, 0.96, 1),
+        borderColor: method === "cash" ? rgb(0.82, 0.64, 0.2) : rgb(0.4, 0.61, 0.84),
+        borderWidth: 0.6,
+      });
       drawText(
+        method.toUpperCase(),
+        chipX + 6,
+        y - 12,
+        7.5,
+        true,
+        method === "cash" ? rgb(0.48, 0.33, 0.06) : rgb(0.14, 0.36, 0.56),
+      );
+      drawCellRight(formatRupiah(item.amount || 0), 4, y - 12, 8);
+      drawCellRight(
         method === "cash" ? "-" : formatRupiah(item.transfer_fee || 0),
-        colXs[5],
+        5,
         y - 12,
         8,
       );
       drawText(status, colXs[6], y - 12, 8);
       drawText(formatDate(item.transfer_at), colXs[7], y - 12, 8);
+      page.drawLine({
+        start: { x: methodDividerX, y: y - rowHeight },
+        end: { x: methodDividerX, y },
+        thickness: 0.6,
+        color: rgb(0.88, 0.92, 0.95),
+      });
       y -= rowHeight;
     }
 
