@@ -352,8 +352,8 @@ export const GET: RequestHandler = async ({ params }) => {
       "Status",
       "Tanggal",
     ];
-    // Widen recipient, trim amount/date widths while keeping table inside page.
-    const colWidths = [18, 118, 108, 58, 66, 54, 42, 46];
+    // Prioritize recipient visibility by shrinking numeric/date columns and padding.
+    const colWidths = [16, 136, 100, 56, 58, 46, 38, 40];
     const colXs: number[] = [];
     let cursor = margin + 6;
     for (const w of colWidths) {
@@ -372,7 +372,7 @@ export const GET: RequestHandler = async ({ params }) => {
     ) => {
       const activeFont = bold ? fontBold : font;
       const textWidth = activeFont.widthOfTextAtSize(text, size);
-      const x = colXs[colIndex] + colWidths[colIndex] - textWidth - 4;
+      const x = colXs[colIndex] + colWidths[colIndex] - textWidth - 2;
       drawText(text, x, textY, size, bold, color);
     };
 
@@ -386,7 +386,7 @@ export const GET: RequestHandler = async ({ params }) => {
         color: rgb(0.91, 0.95, 0.96),
       });
       headers.forEach((h, i) =>
-        drawText(h, colXs[i], y - 14, 8, true, rgb(0.18, 0.24, 0.26)),
+        drawText(h, colXs[i] + (i >= 4 ? 1 : 0), y - 14, 8, true, rgb(0.18, 0.24, 0.26)),
       );
       page.drawLine({
         start: { x: methodDividerX, y: y - 20 },
@@ -423,8 +423,8 @@ export const GET: RequestHandler = async ({ params }) => {
       const status = item.transfer_status === "done" ? "DONE" : "PENDING";
 
       drawText(String(i + 1), colXs[0], y - 12, 8);
-      drawText(clip(item.recipient_name || "-", 26), colXs[1], y - 12, 8);
-      drawText(clip(rekening, 22), colXs[2], y - 12, 8);
+      drawText(clip(item.recipient_name || "-", 34), colXs[1], y - 12, 8);
+      drawText(clip(rekening, 20), colXs[2], y - 12, 8);
       const chipX = colXs[3] + 1;
       const chipY = y - 15;
       const chipW = 48;
