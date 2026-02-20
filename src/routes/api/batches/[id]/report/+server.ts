@@ -110,6 +110,109 @@ export const GET: RequestHandler = async ({ params }) => {
       });
     };
 
+    const drawSummaryIcon = (
+      kind: "transfer" | "fee" | "cash" | "total",
+      cx: number,
+      cy: number,
+    ) => {
+      const iconColor = rgb(1, 1, 1);
+      if (kind === "transfer") {
+        // bidirectional transfer arrows
+        page.drawLine({
+          start: { x: cx - 4, y: cy + 2.5 },
+          end: { x: cx + 3.5, y: cy + 2.5 },
+          thickness: 1.2,
+          color: iconColor,
+        });
+        page.drawLine({
+          start: { x: cx + 1.5, y: cy + 4.2 },
+          end: { x: cx + 3.8, y: cy + 2.5 },
+          thickness: 1.2,
+          color: iconColor,
+        });
+        page.drawLine({
+          start: { x: cx + 1.5, y: cy + 0.8 },
+          end: { x: cx + 3.8, y: cy + 2.5 },
+          thickness: 1.2,
+          color: iconColor,
+        });
+        page.drawLine({
+          start: { x: cx + 4, y: cy - 2.5 },
+          end: { x: cx - 3.5, y: cy - 2.5 },
+          thickness: 1.2,
+          color: iconColor,
+        });
+        page.drawLine({
+          start: { x: cx - 1.5, y: cy - 0.8 },
+          end: { x: cx - 3.8, y: cy - 2.5 },
+          thickness: 1.2,
+          color: iconColor,
+        });
+        page.drawLine({
+          start: { x: cx - 1.5, y: cy - 4.2 },
+          end: { x: cx - 3.8, y: cy - 2.5 },
+          thickness: 1.2,
+          color: iconColor,
+        });
+        return;
+      }
+      if (kind === "fee") {
+        // small coin + plus sign
+        page.drawCircle({
+          x: cx - 1,
+          y: cy,
+          size: 3.1,
+          borderColor: iconColor,
+          borderWidth: 1.2,
+        });
+        page.drawLine({
+          start: { x: cx + 3.8, y: cy },
+          end: { x: cx + 7.2, y: cy },
+          thickness: 1.1,
+          color: iconColor,
+        });
+        page.drawLine({
+          start: { x: cx + 5.5, y: cy - 1.7 },
+          end: { x: cx + 5.5, y: cy + 1.7 },
+          thickness: 1.1,
+          color: iconColor,
+        });
+        return;
+      }
+      if (kind === "cash") {
+        // banknote
+        page.drawRectangle({
+          x: cx - 5.6,
+          y: cy - 3.4,
+          width: 11.2,
+          height: 6.8,
+          borderColor: iconColor,
+          borderWidth: 1.1,
+        });
+        page.drawCircle({
+          x: cx,
+          y: cy,
+          size: 1.6,
+          borderColor: iconColor,
+          borderWidth: 1.1,
+        });
+        return;
+      }
+      // total: check icon
+      page.drawLine({
+        start: { x: cx - 4.2, y: cy - 0.2 },
+        end: { x: cx - 1.2, y: cy - 3 },
+        thickness: 1.4,
+        color: iconColor,
+      });
+      page.drawLine({
+        start: { x: cx - 1.2, y: cy - 3 },
+        end: { x: cx + 4.6, y: cy + 3.2 },
+        thickness: 1.4,
+        color: iconColor,
+      });
+    };
+
     const addPage = () => {
       page = pdf.addPage([pageWidth, pageHeight]);
       y = pageHeight - margin;
@@ -162,28 +265,28 @@ export const GET: RequestHandler = async ({ params }) => {
         value: formatRupiah(transferAmountTotal),
         color: rgb(0.86, 0.96, 0.91),
         accent: rgb(0.12, 0.62, 0.36),
-        badge: "TR",
+        icon: "transfer" as const,
       },
       {
         label: "Transfer Fee",
         value: formatRupiah(transferFeeTotal),
         color: rgb(0.92, 0.91, 0.98),
         accent: rgb(0.45, 0.36, 0.8),
-        badge: "FEE",
+        icon: "fee" as const,
       },
       {
         label: "Cash Paid",
         value: formatRupiah(cashTotal),
         color: rgb(0.99, 0.95, 0.88),
         accent: rgb(0.78, 0.54, 0.14),
-        badge: "CSH",
+        icon: "cash" as const,
       },
       {
         label: "Total Paid",
         value: formatRupiah(totalPaid),
         color: rgb(0.89, 0.95, 0.99),
         accent: rgb(0.18, 0.48, 0.76),
-        badge: "TOT",
+        icon: "total" as const,
       },
     ];
     cards.forEach((card, i) => {
@@ -213,7 +316,7 @@ export const GET: RequestHandler = async ({ params }) => {
         size: 9,
         color: card.accent,
       });
-      drawText(card.badge, x + 11.5, cy - 21.3, 6.5, true, rgb(1, 1, 1));
+      drawSummaryIcon(card.icon, x + 17, cy - 19);
       drawText(card.label, x + 33, cy - 18, 9, false, rgb(0.22, 0.26, 0.28));
       drawText(card.value, x + 12, cy - 43, 14, true, rgb(0.07, 0.2, 0.22));
     });
@@ -247,10 +350,10 @@ export const GET: RequestHandler = async ({ params }) => {
       "Jumlah",
       "Fee",
       "Status",
-      "Tgl",
+      "Tanggal",
     ];
-    // Slightly rebalance widths to improve readability between Metode and Jumlah.
-    const colWidths = [18, 100, 110, 58, 76, 54, 42, 52];
+    // Widen recipient, trim amount/date widths while keeping table inside page.
+    const colWidths = [18, 118, 108, 58, 66, 54, 42, 46];
     const colXs: number[] = [];
     let cursor = margin + 6;
     for (const w of colWidths) {
@@ -320,8 +423,8 @@ export const GET: RequestHandler = async ({ params }) => {
       const status = item.transfer_status === "done" ? "DONE" : "PENDING";
 
       drawText(String(i + 1), colXs[0], y - 12, 8);
-      drawText(clip(item.recipient_name || "-", 21), colXs[1], y - 12, 8);
-      drawText(clip(rekening, 25), colXs[2], y - 12, 8);
+      drawText(clip(item.recipient_name || "-", 26), colXs[1], y - 12, 8);
+      drawText(clip(rekening, 22), colXs[2], y - 12, 8);
       const chipX = colXs[3] + 1;
       const chipY = y - 15;
       const chipW = 48;
