@@ -36,7 +36,7 @@
 		{disabled || !phone
 			? 'bg-white/5 text-white/30 cursor-not-allowed'
 			: notifyStatus === 'sent'
-				? 'bg-sky-500/20 text-sky-300 border border-sky-500/30 hover:bg-sky-500/30'
+				? 'bg-cyan-400/30 text-cyan-50 border border-cyan-300/70 shadow-[0_0_0_1px_rgba(34,211,238,0.35)] hover:bg-cyan-400/40'
 				: 'bg-green-500/20 text-green-300 hover:bg-green-500/40 hover:text-green-100 border border-green-500/30'
 		}"
 	title={!phone ? 'No WhatsApp number' : disabled ? 'Transfer dulu' : notifyStatus === 'sent' ? `Kirim ulang WA ke ${name}` : `Kirim WA ke ${name}`}
