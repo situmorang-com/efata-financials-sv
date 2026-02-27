@@ -1709,6 +1709,135 @@ export const financeTransactionDb = {
     return result.changes > 0;
   },
 
+  updateIncomeWithPolicy: (
+    id: number,
+    data: Partial<FinanceTransaction>,
+    options?: { reason?: string; actor_id?: number | null; actor_email?: string | null },
+  ): { success: boolean; status: number; error?: string; item?: FinanceTransaction } => {
+    const existing = financeTransactionDb.getById(id);
+    if (!existing) {
+      return { success: false, status: 404, error: "Income transaction not found" };
+    }
+    if (existing.type !== "income") {
+      return { success: false, status: 400, error: "Only income transaction can be edited here" };
+    }
+
+    const reason = String(options?.reason || "").trim();
+    if (!reason) {
+      return { success: false, status: 400, error: "Alasan perubahan wajib diisi" };
+    }
+
+    const now = new Date().toISOString();
+    const updated = { ...existing, ...data };
+
+    const changedFields: string[] = [];
+    const compareKeys: Array<keyof FinanceTransaction> = [
+      "sub_type",
+      "party_id",
+      "category_id",
+      "account_id",
+      "amount",
+      "txn_date",
+      "payment_method",
+      "service_label",
+      "reference_no",
+      "notes",
+    ];
+    for (const key of compareKeys) {
+      if ((existing[key] ?? null) !== (updated[key] ?? null)) {
+        changedFields.push(String(key));
+      }
+    }
+
+    if (changedFields.length === 0) {
+      return { success: true, status: 200, item: existing };
+    }
+
+    const tagRef = String(existing.reference_no || "").toUpperCase();
+    const tagNotes = String(existing.notes || "").toUpperCase();
+    const hasSystemTag =
+      tagRef.startsWith("BANK:") || tagNotes.includes("[BANK_RECON_IMPORT]");
+    const reconRow = db
+      .prepare(
+        `SELECT i.status AS import_status
+         FROM bank_statement_lines l
+         JOIN bank_statement_imports i ON i.id = l.import_id
+         WHERE l.matched_txn_id = ?
+         LIMIT 1`,
+      )
+      .get(id) as { import_status?: "open" | "in_review" | "closed" } | undefined;
+    const isReconciled = hasSystemTag || Boolean(reconRow);
+    const isClosedPeriod = reconRow?.import_status === "closed";
+
+    const protectedFields = new Set(["sub_type", "amount", "txn_date", "account_id"]);
+    const touchingProtected = changedFields.filter((field) =>
+      protectedFields.has(field),
+    );
+    if (isReconciled && touchingProtected.length > 0) {
+      return {
+        success: false,
+        status: 409,
+        error:
+          "Transaksi hasil rekonsiliasi: field inti (jenis/nominal/tanggal/akun) dikunci. Gunakan jurnal penyesuaian untuk koreksi.",
+      };
+    }
+
+    const result = db
+      .prepare(
+        `UPDATE transactions
+         SET type = ?, sub_type = ?, party_id = ?, category_id = ?, account_id = ?, amount = ?, txn_date = ?, payment_method = ?, service_label = ?, reference_no = ?, status = ?, notes = ?, created_by = ?, approved_by = ?, approved_at = ?, updated_at = ?
+         WHERE id = ?`,
+      )
+      .run(
+        updated.type,
+        updated.sub_type,
+        updated.party_id ?? null,
+        updated.category_id,
+        updated.account_id ?? null,
+        Math.max(0, Math.round(updated.amount || 0)),
+        updated.txn_date,
+        updated.payment_method ?? null,
+        updated.service_label ?? null,
+        updated.reference_no ?? null,
+        updated.status,
+        updated.notes ?? null,
+        updated.created_by ?? null,
+        updated.approved_by ?? null,
+        updated.approved_at ?? null,
+        now,
+        id,
+      );
+
+    if (result.changes <= 0) {
+      return { success: false, status: 500, error: "Gagal menyimpan perubahan income" };
+    }
+
+    const after = financeTransactionDb.getById(id);
+    db.prepare(
+      `INSERT INTO audit_logs (actor_id, entity, entity_id, action, before_json, after_json, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      options?.actor_id ?? null,
+      "transaction",
+      id,
+      "income_update",
+      JSON.stringify(existing),
+      JSON.stringify({
+        transaction: after ?? updated,
+        _meta: {
+          reason,
+          actor_email: options?.actor_email ?? null,
+          changed_fields: changedFields,
+          reconciled: isReconciled,
+          closed_period: isClosedPeriod,
+        },
+      }),
+      now,
+    );
+
+    return { success: true, status: 200, item: after ?? undefined };
+  },
+
   softVoid: (id: number): boolean => {
     const now = new Date().toISOString();
     const result = db

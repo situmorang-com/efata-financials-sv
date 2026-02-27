@@ -455,8 +455,8 @@
 									{#each lines as line}
 										<tr class="glass-table-row">
 											<td class="px-3 py-2.5 text-white/75 text-xs">{dateTimeLabel(line.post_date)}</td>
-											<td class="px-3 py-2.5 text-white/80 text-xs max-w-[360px]">
-												<div class="truncate">{line.remarks || line.additional_desc || '-'}</div>
+											<td class="px-3 py-2.5 text-white/80 text-xs max-w-[440px] align-top">
+												<div class="whitespace-normal break-all leading-snug">{line.remarks || line.additional_desc || '-'}</div>
 											</td>
 											<td class="px-3 py-2.5 text-right text-xs font-mono {line.signed_amount >= 0 ? 'text-emerald-200' : 'text-rose-200'}">
 												{line.signed_amount >= 0 ? '+' : '-'}{formatRupiah(Math.abs(line.signed_amount))}
