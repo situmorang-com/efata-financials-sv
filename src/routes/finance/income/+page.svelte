@@ -8,7 +8,9 @@
 	import LayoutDashboard from '@lucide/svelte/icons/layout-dashboard';
 	import Landmark from '@lucide/svelte/icons/landmark';
 	import Plus from '@lucide/svelte/icons/plus';
+	import Pencil from '@lucide/svelte/icons/pencil';
 	import Trash2 from '@lucide/svelte/icons/trash-2';
+	import X from '@lucide/svelte/icons/x';
 
 	let loading = $state(true);
 	let saving = $state(false);
@@ -43,6 +45,24 @@
 		notes: ''
 	});
 
+	let showEditModal = $state(false);
+	let editSaving = $state(false);
+	let editCoreLocked = $state(false);
+	let editingItemId = $state<number | null>(null);
+	let editForm = $state({
+		sub_type: 'tithe' as 'tithe' | 'offering' | 'other_income',
+		party_id: '',
+		category_id: '',
+		account_id: '',
+		amount: 0,
+		txn_date: '',
+		payment_method: 'transfer',
+		service_label: '',
+		reference_no: '',
+		notes: '',
+		edit_reason: ''
+	});
+
 	let visibleItems = $derived(items.filter((i) => i.status !== 'void'));
 	let categoryLocked = $derived(formData.sub_type === 'tithe' || formData.sub_type === 'offering');
 
@@ -50,6 +70,12 @@
 		if (subType === 'tithe') return 'Persepuluhan';
 		if (subType === 'offering') return 'Persembahan';
 		return null;
+	}
+
+	function isReconciledIncome(item: FinanceTransaction): boolean {
+		const ref = String(item.reference_no || '').toUpperCase();
+		const notes = String(item.notes || '').toUpperCase();
+		return ref.startsWith('BANK:') || notes.includes('[BANK_RECON_IMPORT]');
 	}
 
 	function syncMappedCategory() {
@@ -73,6 +99,27 @@
 			return;
 		}
 		// other_income: free text, keep existing value
+	}
+
+	function syncEditMappedCategory() {
+		const mapped = mappedCategoryName(editForm.sub_type);
+		if (!mapped) return;
+		const found = categories.find((c) => c.name.toLowerCase() === mapped.toLowerCase());
+		if (found?.id) {
+			editForm.category_id = String(found.id);
+		}
+	}
+
+	function syncEditDestination() {
+		if (editForm.sub_type === 'tithe') {
+			editForm.service_label = 'Storehouse / Conference';
+			return;
+		}
+		if (editForm.sub_type === 'offering') {
+			if (!editForm.service_label) {
+				editForm.service_label = offeringPlans[0];
+			}
+		}
 	}
 
 	function queryString(): string {
@@ -175,6 +222,80 @@
 		} catch (error) {
 			console.error('Failed to void income:', error);
 			addToast('Gagal void income', 'error');
+		}
+	}
+
+	function openEdit(item: FinanceTransaction) {
+		editingItemId = item.id ?? null;
+		editCoreLocked = isReconciledIncome(item);
+		editForm.sub_type = item.sub_type === 'expense' ? 'other_income' : item.sub_type;
+		editForm.party_id = item.party_id ? String(item.party_id) : '';
+		editForm.category_id = item.category_id ? String(item.category_id) : '';
+		editForm.account_id = item.account_id ? String(item.account_id) : '';
+		editForm.amount = Number(item.amount || 0);
+		editForm.txn_date = item.txn_date ? item.txn_date.slice(0, 10) : new Date().toISOString().slice(0, 10);
+		editForm.payment_method = item.payment_method || 'transfer';
+		editForm.service_label = item.service_label || '';
+		editForm.reference_no = item.reference_no || '';
+		editForm.notes = item.notes || '';
+		editForm.edit_reason = '';
+		syncEditMappedCategory();
+		syncEditDestination();
+		showEditModal = true;
+	}
+
+	function closeEdit() {
+		showEditModal = false;
+		editingItemId = null;
+		editCoreLocked = false;
+		editForm.edit_reason = '';
+	}
+
+	async function saveEdit() {
+		if (!editingItemId) return;
+		if (!editForm.category_id) {
+			addToast('Kategori wajib dipilih', 'warning');
+			return;
+		}
+		if (!editForm.txn_date || !editForm.amount) {
+			addToast('Tanggal dan nominal wajib diisi', 'warning');
+			return;
+		}
+		if (!editForm.edit_reason.trim()) {
+			addToast('Alasan perubahan wajib diisi', 'warning');
+			return;
+		}
+		editSaving = true;
+		try {
+			const res = await fetch(`/api/finance/income/${editingItemId}`, {
+				method: 'PUT',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					sub_type: editForm.sub_type,
+					party_id: editForm.party_id ? Number(editForm.party_id) : null,
+					category_id: Number(editForm.category_id),
+					account_id: editForm.account_id ? Number(editForm.account_id) : null,
+					amount: Number(editForm.amount),
+					txn_date: `${editForm.txn_date}T12:00:00.000Z`,
+					payment_method: editForm.payment_method,
+					service_label: editForm.service_label,
+					reference_no: editForm.reference_no,
+					notes: editForm.notes,
+					edit_reason: editForm.edit_reason
+				})
+			});
+			const payload = await res.json().catch(() => ({}));
+			if (!res.ok) {
+				throw new Error(payload?.error || 'Gagal menyimpan perubahan');
+			}
+			addToast('Income berhasil diperbarui', 'success');
+			closeEdit();
+			await loadItems();
+		} catch (error) {
+			console.error('Failed to update income:', error);
+			addToast(error instanceof Error ? error.message : 'Gagal mengubah income', 'error');
+		} finally {
+			editSaving = false;
 		}
 	}
 
@@ -376,6 +497,9 @@
 								<td class="px-3 py-2.5 text-right text-emerald-200 text-sm font-semibold">{formatRupiah(item.amount)}</td>
 								<td class="px-3 py-2.5 text-white/60 text-sm max-w-[280px] truncate">{item.notes || '-'}</td>
 								<td class="px-3 py-2.5 text-center">
+									<button type="button" onclick={() => openEdit(item)} class="text-white/45 hover:text-sky-200 transition-colors p-1.5 rounded-lg hover:bg-sky-500/10" title={isReconciledIncome(item) ? 'Edit metadata (field inti dikunci)' : 'Edit'}>
+										<Pencil class="w-4 h-4" />
+									</button>
 									<button type="button" onclick={() => voidIncome(item.id!)} class="text-white/35 hover:text-red-300 transition-colors p-1.5 rounded-lg hover:bg-red-500/10" title="Void">
 										<Trash2 class="w-4 h-4" />
 									</button>
@@ -384,6 +508,97 @@
 						{/each}
 					</tbody>
 				</table>
+			</div>
+		</div>
+	{/if}
+
+	{#if showEditModal}
+		<div class="fixed inset-0 z-50 bg-slate-950/65 backdrop-blur-sm p-4 flex items-center justify-center">
+			<div class="glass-card rounded-2xl w-full max-w-3xl p-5 max-h-[90vh] overflow-y-auto glass-scrollbar">
+				<div class="flex items-start justify-between gap-3 mb-4">
+					<div>
+						<h3 class="text-white font-semibold brand-font">Edit Income</h3>
+						<p class="text-white/55 text-xs mt-1">Perubahan disimpan ke audit log.</p>
+						{#if editCoreLocked}
+							<p class="text-amber-200/90 text-xs mt-2">
+								Transaksi hasil rekonsiliasi: field inti (jenis, tanggal, nominal, akun) dikunci.
+							</p>
+						{/if}
+					</div>
+					<button type="button" onclick={closeEdit} class="glass-button rounded-lg p-1.5 text-white/70 hover:text-white">
+						<X class="w-4 h-4" />
+					</button>
+				</div>
+
+				<div class="grid grid-cols-1 md:grid-cols-2 gap-3 md:gap-4">
+					<div>
+						<label class="block text-white/60 text-xs uppercase tracking-wider mb-1.5">Jenis</label>
+						<select bind:value={editForm.sub_type} disabled={editCoreLocked} onchange={() => { syncEditMappedCategory(); syncEditDestination(); }} class="w-full glass-input rounded-xl px-3 py-2 text-white text-sm disabled:opacity-60 disabled:cursor-not-allowed">
+							<option value="tithe">Persepuluhan</option>
+							<option value="offering">Persembahan</option>
+							<option value="other_income">Lainnya</option>
+						</select>
+					</div>
+					<div>
+						<label class="block text-white/60 text-xs uppercase tracking-wider mb-1.5">Tanggal</label>
+						<input type="date" bind:value={editForm.txn_date} disabled={editCoreLocked} class="w-full glass-input rounded-xl px-3 py-2 text-white text-sm disabled:opacity-60 disabled:cursor-not-allowed" />
+					</div>
+					<div>
+						<label class="block text-white/60 text-xs uppercase tracking-wider mb-1.5">Nominal</label>
+						<input type="number" min="0" step="1000" bind:value={editForm.amount} disabled={editCoreLocked} class="w-full glass-input rounded-xl px-3 py-2 text-white text-sm disabled:opacity-60 disabled:cursor-not-allowed" />
+					</div>
+					<div>
+						<label class="block text-white/60 text-xs uppercase tracking-wider mb-1.5">Kategori</label>
+						<select bind:value={editForm.category_id} class="w-full glass-input rounded-xl px-3 py-2 text-white text-sm">
+							{#each categories as c}
+								<option value={String(c.id)}>{c.name}</option>
+							{/each}
+						</select>
+					</div>
+					<div>
+						<label class="block text-white/60 text-xs uppercase tracking-wider mb-1.5">Akun</label>
+						<select bind:value={editForm.account_id} disabled={editCoreLocked} class="w-full glass-input rounded-xl px-3 py-2 text-white text-sm disabled:opacity-60 disabled:cursor-not-allowed">
+							<option value="">-</option>
+							{#each accounts as a}
+								<option value={String(a.id)}>{a.name}</option>
+							{/each}
+						</select>
+					</div>
+					<div>
+						<label class="block text-white/60 text-xs uppercase tracking-wider mb-1.5">Metode</label>
+						<input type="text" bind:value={editForm.payment_method} class="w-full glass-input rounded-xl px-3 py-2 text-white text-sm" />
+					</div>
+					<div>
+						<label class="block text-white/60 text-xs uppercase tracking-wider mb-1.5">Tujuan Dana</label>
+						<input type="text" bind:value={editForm.service_label} class="w-full glass-input rounded-xl px-3 py-2 text-white text-sm" />
+					</div>
+					<div>
+						<label class="block text-white/60 text-xs uppercase tracking-wider mb-1.5">Pihak (opsional)</label>
+						<select bind:value={editForm.party_id} class="w-full glass-input rounded-xl px-3 py-2 text-white text-sm">
+							<option value="">-</option>
+							{#each parties as p}
+								<option value={String(p.id)}>{p.name}</option>
+							{/each}
+						</select>
+					</div>
+					<div class="md:col-span-2">
+						<label class="block text-white/60 text-xs uppercase tracking-wider mb-1.5">Ref</label>
+						<input type="text" bind:value={editForm.reference_no} class="w-full glass-input rounded-xl px-3 py-2 text-white text-sm" />
+					</div>
+					<div class="md:col-span-2">
+						<label class="block text-white/60 text-xs uppercase tracking-wider mb-1.5">Catatan</label>
+						<input type="text" bind:value={editForm.notes} class="w-full glass-input rounded-xl px-3 py-2 text-white text-sm" />
+					</div>
+					<div class="md:col-span-2">
+						<label class="block text-white/60 text-xs uppercase tracking-wider mb-1.5">Alasan Perubahan *</label>
+						<input type="text" bind:value={editForm.edit_reason} class="w-full glass-input rounded-xl px-3 py-2 text-white text-sm" placeholder="contoh: koreksi pihak & keterangan transaksi" />
+					</div>
+				</div>
+
+				<div class="mt-4 flex justify-end gap-2">
+					<button type="button" onclick={closeEdit} class="glass-button rounded-xl px-4 py-2 text-white/80 text-sm">Batal</button>
+					<button type="button" disabled={editSaving} onclick={saveEdit} class="glass-button rounded-xl px-4 py-2 text-white text-sm bg-sky-500/25 hover:bg-sky-500/40 disabled:opacity-70">{editSaving ? 'Menyimpan...' : 'Simpan Perubahan'}</button>
+				</div>
 			</div>
 		</div>
 	{/if}
