@@ -5,17 +5,20 @@
 		zoomType,
 		singleRate,
 		familyRate,
-		onchange
+		onchange,
+		disabled = false
 	}: {
 		zoomType: 'none' | 'single' | 'family';
 		singleRate: number;
 		familyRate: number;
 		onchange: (newType: 'none' | 'single' | 'family') => void;
+		disabled?: boolean;
 	} = $props();
 
 	const cycleOrder: ('none' | 'single' | 'family')[] = ['none', 'single', 'family'];
 
 	function cycle() {
+		if (disabled) return;
 		const currentIndex = cycleOrder.indexOf(zoomType);
 		const nextIndex = (currentIndex + 1) % cycleOrder.length;
 		onchange(cycleOrder[nextIndex]);
@@ -36,6 +39,7 @@
 
 <button
 	type="button"
+	disabled={disabled}
 	onclick={cycle}
 	class="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-medium transition-all border
 		{zoomType === 'single'
@@ -43,7 +47,8 @@
 			: zoomType === 'family'
 				? 'bg-amber-500/20 text-amber-300 border-amber-500/30 hover:bg-amber-500/30'
 				: 'bg-white/5 text-white/30 border-white/10 hover:border-white/25 hover:text-white/50'
-		}"
+		}
+		{disabled ? 'opacity-55 cursor-not-allowed hover:bg-white/5 hover:border-white/10 hover:text-white/30' : ''}"
 	title="Klik untuk ganti: {label} → {zoomType === 'none' ? 'Sendiri' : zoomType === 'single' ? 'Keluarga' : 'Tidak'}"
 >
 	{#if zoomType === 'single'}

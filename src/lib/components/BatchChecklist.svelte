@@ -24,6 +24,8 @@
 	import Banknote from '@lucide/svelte/icons/banknote';
 	import CalendarDays from '@lucide/svelte/icons/calendar-days';
 	import Download from '@lucide/svelte/icons/download';
+	import Lock from '@lucide/svelte/icons/lock';
+	import Pencil from '@lucide/svelte/icons/pencil';
 
 	let { batchId }: { batchId: number } = $props();
 
@@ -35,6 +37,7 @@
 	let completing = $state(false);
 	let autoSkipping = $state(false);
 	let downloading = $state(false);
+	let isEditMode = $state(false);
 	let isSpecial = $derived(batch?.type === 'special');
 
 	function normalizePaymentMethod(value?: string | null): 'transfer' | 'cash' {
@@ -43,6 +46,12 @@
 
 	function isCash(item: BatchItem): boolean {
 		return normalizePaymentMethod(item.payment_method) === 'cash';
+	}
+
+	function ensureEditMode(): boolean {
+		if (isEditMode) return true;
+		addToast('Aktifkan mode Edit dulu', 'info');
+		return false;
 	}
 
 	let transferredCount = $derived(items.filter(i => i.transfer_status === 'done').length);
@@ -89,6 +98,7 @@
 	);
 
 	async function updatePaymentMethod(item: BatchItem, method: 'transfer' | 'cash') {
+		if (!ensureEditMode()) return;
 		const prevMethod = item.payment_method;
 		const prevFee = item.transfer_fee;
 		item.payment_method = method;
@@ -113,6 +123,7 @@
 	}
 
 	async function toggleCashPaid(item: BatchItem) {
+		if (!ensureEditMode()) return;
 		const nextStatus: 'pending' | 'done' = item.transfer_status === 'done' ? 'pending' : 'done';
 		const nextTransferAt = nextStatus === 'done' ? new Date().toISOString() : null;
 		const nextNotifyStatus = nextStatus === 'pending' ? 'pending' : item.notify_status;
@@ -223,6 +234,7 @@
 	}
 
 	async function updateSaturdays(item: BatchItem, newSaturdays: number) {
+		if (!ensureEditMode()) return;
 		if (!batch) return;
 		const oldSat = item.saturdays_attended;
 		const newAmount = calculateAmount(newSaturdays, batch.transport_rate, item.zoom_type, batch.zoom_single_rate, batch.zoom_family_rate);
@@ -245,6 +257,7 @@
 	}
 
 	async function updateZoomType(item: BatchItem, newType: 'none' | 'single' | 'family') {
+		if (!ensureEditMode()) return;
 		if (!batch) return;
 		const oldType = item.zoom_type;
 		const newAmount = calculateAmount(item.saturdays_attended, batch.transport_rate, newType, batch.zoom_single_rate, batch.zoom_family_rate);
@@ -267,6 +280,7 @@
 	}
 
 	async function updateAmount(item: BatchItem, newAmount: number) {
+		if (!ensureEditMode()) return;
 		const sanitized = Math.max(0, Math.round(newAmount || 0));
 		const oldAmount = item.amount;
 		item.amount = sanitized;
@@ -284,6 +298,7 @@
 	}
 
 	async function updateTransferFee(item: BatchItem, newFee: number) {
+		if (!ensureEditMode()) return;
 		const sanitized = Math.max(0, Math.round(newFee || 0));
 		const oldFee = item.transfer_fee;
 		item.transfer_fee = sanitized;
@@ -301,6 +316,7 @@
 	}
 
 	function handleTransferChange(item: BatchItem, newStatus: 'pending' | 'done', hasProofNow: boolean) {
+		if (!isEditMode) return;
 		item.transfer_status = newStatus;
 		item.has_transfer_proof = hasProofNow ? 1 : 0;
 		if (newStatus === 'pending') {
@@ -316,6 +332,7 @@
 	}
 
 	async function handleNotify(item: BatchItem) {
+		if (!ensureEditMode()) return;
 		if (item.transfer_status !== 'done') return;
 		try {
 			await fetch(`/api/batches/${batchId}/items/${item.id}`, {
@@ -336,6 +353,7 @@
 	}
 
 	async function markAllTransferred() {
+		if (!ensureEditMode()) return;
 		const pendingIds = items.filter(i => i.transfer_status === 'pending').map(i => i.id!);
 		if (pendingIds.length === 0) return;
 		try {
@@ -362,6 +380,7 @@
 	}
 
 	async function updateTransferDate(item: BatchItem, dateValue: string) {
+		if (!ensureEditMode()) return;
 		const iso = dateValue ? new Date(`${dateValue}T12:00:00`).toISOString() : null;
 		try {
 			await fetch(`/api/batches/${batchId}/items/${item.id}`, {
@@ -410,6 +429,7 @@
 	}
 
 	async function setAllFullAttendance() {
+		if (!ensureEditMode()) return;
 		if (!batch) return;
 		if (batch.type === 'special') return;
 		try {
@@ -427,6 +447,7 @@
 	}
 
 	async function populateBatch() {
+		if (!ensureEditMode()) return;
 		try {
 			await fetch(`/api/batches/${batchId}/populate`, {
 				method: 'POST',
@@ -513,9 +534,25 @@
 					</div>
 				</div>
 				<div class="flex gap-2 flex-wrap">
+					<button
+						onclick={() => { isEditMode = !isEditMode; }}
+						class="glass-button rounded-full px-3 py-2 text-white text-sm border flex items-center gap-1.5
+							{isEditMode
+								? 'border-amber-400/40 bg-amber-500/20 hover:bg-amber-500/30'
+								: 'border-white/20 bg-white/10 hover:bg-white/20'}"
+					>
+						{#if isEditMode}
+							<Lock class="w-4 h-4" />
+							Selesai Edit
+						{:else}
+							<Pencil class="w-4 h-4" />
+							Edit
+						{/if}
+					</button>
 					{#if items.length === 0}
 						<button
 							onclick={populateBatch}
+							disabled={!isEditMode}
 							class="glass-button rounded-full px-4 py-2 text-white text-sm font-semibold bg-emerald-500/25 hover:bg-emerald-500/40 flex items-center gap-1.5"
 						>
 							<UserPlus class="w-4 h-4" />
@@ -534,8 +571,9 @@
 					{#if !isSpecial}
 						<button
 							onclick={setAllFullAttendance}
+							disabled={!isEditMode}
 							class="glass-button rounded-full px-3 py-2 text-white text-sm border border-emerald-500/20 flex items-center gap-1.5
-								bg-emerald-500/10 hover:bg-emerald-500/25"
+								{!isEditMode ? 'opacity-50 cursor-not-allowed bg-emerald-500/10' : 'bg-emerald-500/10 hover:bg-emerald-500/25'}"
 						>
 							<CalendarDays class="w-4 h-4" />
 							Hadir Penuh
@@ -543,14 +581,22 @@
 					{/if}
 					<button
 						onclick={markAllTransferred}
-						disabled={pendingTransferCount === 0}
+						disabled={!isEditMode || pendingTransferCount === 0}
 						class="glass-button rounded-full px-3 py-2 text-white text-sm border border-emerald-500/30 flex items-center gap-1.5
-							{pendingTransferCount === 0 ? 'opacity-50 cursor-not-allowed' : 'bg-emerald-500/20 hover:bg-emerald-500/40'}"
+							{!isEditMode || pendingTransferCount === 0 ? 'opacity-50 cursor-not-allowed' : 'bg-emerald-500/20 hover:bg-emerald-500/40'}"
 					>
 						<CheckCheck class="w-4 h-4" />
 						Tandai Semua Lunas
 					</button>
 				</div>
+			</div>
+			<div class="glass-card rounded-xl p-2.5 mb-3 flex items-center gap-2 text-xs {isEditMode ? 'border border-amber-400/30 text-amber-100 bg-amber-500/10' : 'border border-white/10 text-white/70'}">
+				<Lock class="w-3.5 h-3.5 shrink-0" />
+				{#if isEditMode}
+					<span>Mode Edit aktif. Perubahan akan langsung tersimpan.</span>
+				{:else}
+					<span>Mode terkunci untuk mencegah salah tekan. Tekan <strong>Edit</strong> untuk mengubah data.</span>
+				{/if}
 			</div>
 
 			<!-- Stats -->
@@ -713,6 +759,7 @@
 											<SaturdayDots
 												total={batch.total_saturdays}
 												attended={item.saturdays_attended}
+												disabled={!isEditMode}
 												onchange={(n) => updateSaturdays(item, n)}
 											/>
 										</td>
@@ -721,6 +768,7 @@
 												zoomType={item.zoom_type}
 												singleRate={batch.zoom_single_rate}
 												familyRate={batch.zoom_family_rate}
+												disabled={!isEditMode}
 												onchange={(t) => updateZoomType(item, t)}
 											/>
 										</td>
@@ -730,6 +778,7 @@
 											<input
 												type="text"
 												inputmode="numeric"
+												disabled={!isEditMode}
 												class="glass-input rounded-lg px-2 py-1 text-xs text-white/90 w-[128px] text-right"
 												value={formatCurrencyInput(item.amount)}
 												onfocus={(e) => { (e.target as HTMLInputElement).value = String(item.amount || 0); }}
@@ -748,6 +797,7 @@
 									<td class="px-3 py-2.5 text-center">
 										<select
 											class="glass-input rounded-lg px-2 py-1 text-xs text-white/90"
+											disabled={!isEditMode}
 											value={normalizePaymentMethod(item.payment_method)}
 											onchange={(e) =>
 												updatePaymentMethod(
@@ -766,6 +816,7 @@
 											<input
 												type="text"
 												inputmode="numeric"
+												disabled={!isEditMode}
 												class="glass-input rounded-lg px-2 py-1 text-xs text-white/90 w-[92px] text-right"
 												value={formatCurrencyInput(item.transfer_fee || 0)}
 												onfocus={(e) => { (e.target as HTMLInputElement).value = String(item.transfer_fee || 0); }}
@@ -781,6 +832,7 @@
 										{#if item.transfer_status === 'done'}
 											<input
 												type="date"
+												disabled={!isEditMode}
 												class="glass-input rounded-lg px-2 py-1 text-xs text-white/80 w-[124px]"
 												value={formatDateInput(item.transfer_at)}
 												onchange={(e) => updateTransferDate(item, (e.target as HTMLInputElement).value)}
@@ -793,6 +845,7 @@
 										{#if isCash(item)}
 											<button
 												type="button"
+												disabled={!isEditMode}
 												onclick={() => toggleCashPaid(item)}
 												class="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium transition-all
 													{item.transfer_status === 'done'
@@ -806,6 +859,7 @@
 											<TransferProof
 												itemId={item.id!}
 												{batchId}
+												disabled={!isEditMode}
 												transferStatus={item.transfer_status}
 												hasProof={!!item.has_transfer_proof}
 												recipientName={item.recipient_name || ''}
@@ -818,7 +872,7 @@
 											phone={item.whatsapp || ''}
 											name={item.recipient_name || ''}
 											amount={item.amount}
-											disabled={item.transfer_status !== 'done'}
+											disabled={!isEditMode || item.transfer_status !== 'done'}
 											details={isSpecial ? undefined : {
 												saturdays_attended: item.saturdays_attended,
 												transport_rate: batch.transport_rate,
@@ -868,6 +922,7 @@
 									<input
 										type="text"
 										inputmode="numeric"
+										disabled={!isEditMode}
 										class="glass-input rounded-lg px-2 py-1 text-xs text-white/90 w-[120px] text-right"
 										value={formatCurrencyInput(item.amount)}
 										onfocus={(e) => { (e.target as HTMLInputElement).value = String(item.amount || 0); }}
@@ -892,6 +947,7 @@
 								<input
 									type="text"
 									inputmode="numeric"
+									disabled={!isEditMode}
 									class="glass-input rounded-lg px-2 py-1 text-xs text-white/90 w-[110px] text-right"
 									value={formatCurrencyInput(item.transfer_fee || 0)}
 									onfocus={(e) => { (e.target as HTMLInputElement).value = String(item.transfer_fee || 0); }}
@@ -908,6 +964,7 @@
 							<span class="text-white/40 text-xs">Metode</span>
 							<select
 								class="glass-input rounded-lg px-2 py-1 text-xs text-white/90"
+								disabled={!isEditMode}
 								value={normalizePaymentMethod(item.payment_method)}
 								onchange={(e) =>
 									updatePaymentMethod(
@@ -928,6 +985,7 @@
 									<SaturdayDots
 										total={batch.total_saturdays}
 										attended={item.saturdays_attended}
+										disabled={!isEditMode}
 										onchange={(n) => updateSaturdays(item, n)}
 									/>
 								</div>
@@ -937,6 +995,7 @@
 										zoomType={item.zoom_type}
 										singleRate={batch.zoom_single_rate}
 										familyRate={batch.zoom_family_rate}
+										disabled={!isEditMode}
 										onchange={(t) => updateZoomType(item, t)}
 									/>
 								</div>
@@ -949,6 +1008,7 @@
 								{#if isCash(item)}
 									<button
 										type="button"
+										disabled={!isEditMode}
 										onclick={() => toggleCashPaid(item)}
 										class="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium transition-all
 											{item.transfer_status === 'done'
@@ -962,6 +1022,7 @@
 									<TransferProof
 										itemId={item.id!}
 										{batchId}
+										disabled={!isEditMode}
 										transferStatus={item.transfer_status}
 										hasProof={!!item.has_transfer_proof}
 										recipientName={item.recipient_name || ''}
@@ -971,6 +1032,7 @@
 								{#if item.transfer_status === 'done'}
 									<input
 										type="date"
+										disabled={!isEditMode}
 										class="glass-input rounded-lg px-2 py-1 text-xs text-white/80"
 										value={formatDateInput(item.transfer_at)}
 										onchange={(e) => updateTransferDate(item, (e.target as HTMLInputElement).value)}
@@ -982,7 +1044,7 @@
 									phone={item.whatsapp || ''}
 									name={item.recipient_name || ''}
 									amount={item.amount}
-									disabled={item.transfer_status !== 'done'}
+									disabled={!isEditMode || item.transfer_status !== 'done'}
 									details={isSpecial ? undefined : {
 										saturdays_attended: item.saturdays_attended,
 										transport_rate: batch.transport_rate,

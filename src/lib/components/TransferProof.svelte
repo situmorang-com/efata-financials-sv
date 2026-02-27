@@ -13,7 +13,8 @@
 		transferStatus,
 		hasProof,
 		recipientName,
-		onStatusChange
+		onStatusChange,
+		disabled = false
 	}: {
 		itemId: number;
 		batchId: number;
@@ -21,6 +22,7 @@
 		hasProof: boolean;
 		recipientName: string;
 		onStatusChange: (newStatus: 'pending' | 'done', hasProof: boolean) => void;
+		disabled?: boolean;
 	} = $props();
 
 	let mode = $state<'idle' | 'picking' | 'uploading' | 'viewing'>('idle');
@@ -70,6 +72,7 @@
 	}
 
 	async function handleFileSelected(e: Event) {
+		if (disabled) return;
 		const input = e.target as HTMLInputElement;
 		const file = input.files?.[0];
 		if (!file) return;
@@ -104,6 +107,7 @@
 	}
 
 	async function markDoneWithoutProof() {
+		if (disabled) return;
 		mode = 'uploading';
 		uploadProgress = 'Menyimpan...';
 		try {
@@ -125,6 +129,7 @@
 	}
 
 	async function undoTransfer() {
+		if (disabled) return;
 		try {
 			// Delete proof file if exists
 			if (hasProof) {
@@ -160,6 +165,7 @@
 	}
 
 	function openPicker() {
+		if (disabled) return;
 		mode = 'picking';
 	}
 
@@ -173,9 +179,11 @@
 		<!-- Pending: Show transfer button -->
 		<button
 			type="button"
+			disabled={disabled}
 			onclick={openPicker}
 			class="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition-all
-				bg-white/5 text-white/50 border border-white/15 hover:border-white/30"
+				bg-white/5 text-white/50 border border-white/15 hover:border-white/30
+				{disabled ? 'opacity-50 cursor-not-allowed hover:border-white/15' : ''}"
 		>
 			<Upload class="w-3.5 h-3.5" />
 			Transfer
@@ -196,6 +204,7 @@
 						type="file"
 						accept="image/*"
 						capture="environment"
+						disabled={disabled}
 						onchange={handleFileSelected}
 						class="hidden"
 					/>
@@ -210,8 +219,9 @@
 			</div>
 			<button
 				type="button"
+				disabled={disabled}
 				onclick={markDoneWithoutProof}
-				class="text-white/40 text-[11px] hover:text-white/60 transition-colors text-left"
+				class="text-white/40 text-[11px] hover:text-white/60 transition-colors text-left {disabled ? 'opacity-50 cursor-not-allowed' : ''}"
 			>
 				Tandai selesai tanpa bukti →
 			</button>
@@ -231,6 +241,7 @@
 				<button
 					type="button"
 					onclick={viewProof}
+					disabled={disabled && !hasProof}
 					class="flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs font-medium transition-all
 						bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 hover:bg-emerald-500/30"
 					title="Lihat bukti transfer"
@@ -241,9 +252,11 @@
 			{:else}
 				<button
 					type="button"
+					disabled={disabled}
 					onclick={openPicker}
 					class="flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs font-medium transition-all
-						bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 hover:bg-emerald-500/30"
+						bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 hover:bg-emerald-500/30
+						{disabled ? 'opacity-50 cursor-not-allowed hover:bg-emerald-500/20' : ''}"
 					title="Transfer selesai (tanpa bukti) — klik untuk upload bukti"
 				>
 					<Check class="w-3.5 h-3.5" />
@@ -251,8 +264,9 @@
 			{/if}
 			<button
 				type="button"
+				disabled={disabled}
 				onclick={undoTransfer}
-				class="p-1 rounded text-white/20 hover:text-red-300 hover:bg-red-500/10 transition-all"
+				class="p-1 rounded text-white/20 hover:text-red-300 hover:bg-red-500/10 transition-all {disabled ? 'opacity-50 cursor-not-allowed hover:text-white/20 hover:bg-transparent' : ''}"
 				title="Batalkan transfer"
 			>
 				<Undo2 class="w-3 h-3" />
