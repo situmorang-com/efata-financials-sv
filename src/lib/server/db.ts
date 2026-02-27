@@ -205,6 +205,74 @@ db.exec(`
   )
 `);
 
+db.exec(`
+  CREATE TABLE IF NOT EXISTS bank_statement_imports (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    account_no TEXT NOT NULL,
+    ccy TEXT,
+    file_name TEXT NOT NULL,
+    file_hash TEXT NOT NULL UNIQUE,
+    period_from TEXT,
+    period_to TEXT,
+    opening_balance REAL,
+    closing_balance REAL,
+    total_credit REAL NOT NULL DEFAULT 0,
+    total_debit REAL NOT NULL DEFAULT 0,
+    line_count INTEGER NOT NULL DEFAULT 0,
+    linked_account_id INTEGER,
+    status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'in_review', 'closed')),
+    close_note TEXT,
+    closed_at TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY (linked_account_id) REFERENCES accounts(id)
+  )
+`);
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS bank_statement_lines (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    import_id INTEGER NOT NULL,
+    line_no INTEGER NOT NULL,
+    post_date TEXT NOT NULL,
+    remarks TEXT,
+    additional_desc TEXT,
+    description_norm TEXT,
+    credit_amount REAL NOT NULL DEFAULT 0,
+    debit_amount REAL NOT NULL DEFAULT 0,
+    signed_amount REAL NOT NULL DEFAULT 0,
+    close_balance REAL,
+    line_hash TEXT NOT NULL,
+    match_status TEXT NOT NULL DEFAULT 'unmatched' CHECK (match_status IN ('unmatched', 'suggested', 'matched', 'ignored')),
+    suggested_txn_id INTEGER,
+    suggestion_score INTEGER NOT NULL DEFAULT 0,
+    matched_txn_id INTEGER,
+    match_confidence INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY (import_id) REFERENCES bank_statement_imports(id) ON DELETE CASCADE,
+    FOREIGN KEY (suggested_txn_id) REFERENCES transactions(id),
+    FOREIGN KEY (matched_txn_id) REFERENCES transactions(id),
+    UNIQUE(import_id, line_no)
+  )
+`);
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS bank_reconciliation_matches (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    import_id INTEGER NOT NULL,
+    line_id INTEGER,
+    txn_id INTEGER,
+    action TEXT NOT NULL CHECK (action IN ('auto_match', 'manual_match', 'create_txn', 'ignore', 'unmatch', 'close', 'reopen')),
+    confidence INTEGER,
+    note TEXT,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (import_id) REFERENCES bank_statement_imports(id) ON DELETE CASCADE,
+    FOREIGN KEY (line_id) REFERENCES bank_statement_lines(id) ON DELETE CASCADE,
+    FOREIGN KEY (txn_id) REFERENCES transactions(id)
+  )
+`);
+
 db.exec(
   `CREATE INDEX IF NOT EXISTS idx_transactions_type_date ON transactions(type, txn_date)`,
 );
@@ -226,6 +294,18 @@ db.exec(
   `CREATE INDEX IF NOT EXISTS idx_audit_entity ON audit_logs(entity, entity_id)`,
 );
 db.exec(`CREATE INDEX IF NOT EXISTS idx_audit_actor ON audit_logs(actor_id)`);
+db.exec(
+  `CREATE INDEX IF NOT EXISTS idx_bank_import_status ON bank_statement_imports(status, period_from, period_to)`,
+);
+db.exec(
+  `CREATE INDEX IF NOT EXISTS idx_bank_lines_import_status ON bank_statement_lines(import_id, match_status)`,
+);
+db.exec(
+  `CREATE INDEX IF NOT EXISTS idx_bank_lines_post_date ON bank_statement_lines(post_date)`,
+);
+db.exec(
+  `CREATE INDEX IF NOT EXISTS idx_bank_lines_matched_txn ON bank_statement_lines(matched_txn_id)`,
+);
 
 // --- Migration: add new columns to existing tables if they don't exist ---
 function columnExists(table: string, column: string): boolean {
@@ -233,6 +313,54 @@ function columnExists(table: string, column: string): boolean {
     name: string;
   }[];
   return info.some((col) => col.name === column);
+}
+
+function tableExists(table: string): boolean {
+  const row = db
+    .prepare(
+      "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1",
+    )
+    .get(table) as { name: string } | undefined;
+  return Boolean(row?.name);
+}
+
+function columnNotNull(table: string, column: string): boolean {
+  const info = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{
+    name: string;
+    notnull: number;
+  }>;
+  const col = info.find((item) => item.name === column);
+  return Number(col?.notnull || 0) === 1;
+}
+
+if (
+  tableExists("bank_reconciliation_matches") &&
+  columnExists("bank_reconciliation_matches", "line_id") &&
+  columnNotNull("bank_reconciliation_matches", "line_id")
+) {
+  db.exec(`
+    ALTER TABLE bank_reconciliation_matches RENAME TO bank_reconciliation_matches_old;
+
+    CREATE TABLE bank_reconciliation_matches (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      import_id INTEGER NOT NULL,
+      line_id INTEGER,
+      txn_id INTEGER,
+      action TEXT NOT NULL CHECK (action IN ('auto_match', 'manual_match', 'create_txn', 'ignore', 'unmatch', 'close', 'reopen')),
+      confidence INTEGER,
+      note TEXT,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (import_id) REFERENCES bank_statement_imports(id) ON DELETE CASCADE,
+      FOREIGN KEY (line_id) REFERENCES bank_statement_lines(id) ON DELETE CASCADE,
+      FOREIGN KEY (txn_id) REFERENCES transactions(id)
+    );
+
+    INSERT INTO bank_reconciliation_matches (id, import_id, line_id, txn_id, action, confidence, note, created_at)
+    SELECT id, import_id, line_id, txn_id, action, confidence, note, created_at
+    FROM bank_reconciliation_matches_old;
+
+    DROP TABLE bank_reconciliation_matches_old;
+  `);
 }
 
 // Recipients migrations
@@ -652,6 +780,23 @@ function ensureExpenseCategoryId(name: string): number {
   const result = db
     .prepare(
       "INSERT INTO categories (name, kind, parent_id, is_active, created_at, updated_at) VALUES (?, 'expense', NULL, 1, ?, ?)",
+    )
+    .run(name, now, now);
+  return Number(result.lastInsertRowid);
+}
+
+function ensureIncomeCategoryId(name: string): number {
+  const existing = db
+    .prepare(
+      "SELECT id FROM categories WHERE kind = 'income' AND name = ? LIMIT 1",
+    )
+    .get(name) as { id: number } | undefined;
+  if (existing?.id) return existing.id;
+
+  const now = new Date().toISOString();
+  const result = db
+    .prepare(
+      "INSERT INTO categories (name, kind, parent_id, is_active, created_at, updated_at) VALUES (?, 'income', NULL, 1, ?, ?)",
     )
     .run(name, now, now);
   return Number(result.lastInsertRowid);
@@ -1862,6 +2007,693 @@ export const financeTransactionDb = {
       grand_total: grandTotal,
       groups,
     };
+  },
+};
+
+type BankImportCreateInput = {
+  account_no: string;
+  ccy?: string | null;
+  file_name: string;
+  file_hash: string;
+  period_from?: string | null;
+  period_to?: string | null;
+  opening_balance?: number | null;
+  closing_balance?: number | null;
+  total_credit: number;
+  total_debit: number;
+  line_count: number;
+  linked_account_id?: number | null;
+  lines: Array<{
+    line_no: number;
+    post_date: string;
+    remarks?: string | null;
+    additional_desc?: string | null;
+    credit_amount: number;
+    debit_amount: number;
+    signed_amount: number;
+    close_balance?: number | null;
+    line_hash: string;
+  }>;
+};
+
+type ReconLineWithHints = {
+  id: number;
+  import_id: number;
+  line_no: number;
+  post_date: string;
+  remarks: string | null;
+  additional_desc: string | null;
+  description_norm: string | null;
+  credit_amount: number;
+  debit_amount: number;
+  signed_amount: number;
+  close_balance: number | null;
+  line_hash: string;
+  match_status: "unmatched" | "suggested" | "matched" | "ignored";
+  suggested_txn_id: number | null;
+  suggestion_score: number;
+  matched_txn_id: number | null;
+  match_confidence: number;
+  matched_type: string | null;
+  matched_amount: number | null;
+  matched_txn_date: string | null;
+  matched_reference_no: string | null;
+  matched_service_label: string | null;
+  suggested_type: string | null;
+  suggested_amount: number | null;
+  suggested_txn_date: string | null;
+  suggested_reference_no: string | null;
+  suggested_service_label: string | null;
+};
+
+function normalizeReconText(value?: string | null): string {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function toDateOnly(value: string): string {
+  if (!value) return "";
+  return value.slice(0, 10);
+}
+
+function addDays(dateOnly: string, delta: number): string {
+  const d = new Date(`${dateOnly}T00:00:00.000Z`);
+  d.setUTCDate(d.getUTCDate() + delta);
+  return d.toISOString().slice(0, 10);
+}
+
+function dateDiffDays(left: string, right: string): number {
+  const l = new Date(`${left}T00:00:00.000Z`).getTime();
+  const r = new Date(`${right}T00:00:00.000Z`).getTime();
+  if (!Number.isFinite(l) || !Number.isFinite(r)) return 99;
+  return Math.abs(Math.round((l - r) / 86400000));
+}
+
+function scoreTextSimilarity(lineText: string, txnText: string): number {
+  if (!lineText || !txnText) return 0;
+  const tokens = Array.from(
+    new Set(lineText.split(" ").filter((t) => t.length >= 4)),
+  );
+  if (tokens.length === 0) return 0;
+  let overlap = 0;
+  for (const token of tokens) {
+    if (txnText.includes(token)) overlap += 1;
+  }
+  return Math.min(20, overlap * 4);
+}
+
+function scoreAmount(expected: number, actual: number): number {
+  const diff = Math.abs(expected - actual);
+  if (diff < 0.01) return 60;
+  if (diff <= 1) return 55;
+  if (diff <= 50) return 42;
+  if (diff <= 500) return 24;
+  if (diff <= 2500) return 12;
+  return 0;
+}
+
+function scoreDate(distance: number): number {
+  if (distance === 0) return 25;
+  if (distance === 1) return 18;
+  if (distance === 2) return 10;
+  return 0;
+}
+
+function pickBestTxnCandidate(
+  line: {
+    signed_amount: number;
+    post_date: string;
+    description_norm: string | null;
+  },
+  candidates: Array<{
+    id: number;
+    amount: number;
+    txn_date: string;
+    reference_no: string | null;
+    service_label: string | null;
+    notes: string | null;
+  }>,
+): { txn_id: number; score: number } | null {
+  const expected = Math.abs(Number(line.signed_amount || 0));
+  const lineDate = toDateOnly(line.post_date);
+  const lineText = line.description_norm || "";
+
+  let best: { txn_id: number; score: number } | null = null;
+  for (const c of candidates) {
+    const amountScore = scoreAmount(expected, Math.abs(c.amount || 0));
+    const dayDistance = dateDiffDays(lineDate, toDateOnly(c.txn_date));
+    const dateScore = scoreDate(dayDistance);
+    const txnText = normalizeReconText(
+      `${c.service_label || ""} ${c.reference_no || ""} ${c.notes || ""}`,
+    );
+    const textScore = scoreTextSimilarity(lineText, txnText);
+    const score = Math.min(100, amountScore + dateScore + textScore);
+    if (!best || score > best.score) {
+      best = { txn_id: c.id, score };
+    }
+  }
+  return best;
+}
+
+function ensureImportInReview(importId: number): void {
+  db.prepare(
+    `UPDATE bank_statement_imports
+     SET status = CASE WHEN status = 'open' THEN 'in_review' ELSE status END,
+         updated_at = ?
+     WHERE id = ?`,
+  ).run(new Date().toISOString(), importId);
+}
+
+export const financeReconciliationDb = {
+  getImports: () => {
+    return db
+      .prepare(
+        `SELECT i.*,
+            COALESCE(SUM(CASE WHEN l.match_status = 'matched' THEN 1 ELSE 0 END), 0) AS matched_count,
+            COALESCE(SUM(CASE WHEN l.match_status = 'suggested' THEN 1 ELSE 0 END), 0) AS suggested_count,
+            COALESCE(SUM(CASE WHEN l.match_status = 'unmatched' THEN 1 ELSE 0 END), 0) AS unmatched_count,
+            COALESCE(SUM(CASE WHEN l.match_status = 'ignored' THEN 1 ELSE 0 END), 0) AS ignored_count
+         FROM bank_statement_imports i
+         LEFT JOIN bank_statement_lines l ON l.import_id = i.id
+         GROUP BY i.id
+         ORDER BY COALESCE(i.period_from, i.created_at) DESC, i.id DESC`,
+      )
+      .all();
+  },
+
+  getImportById: (id: number) => {
+    return db
+      .prepare(
+        `SELECT i.*,
+            COALESCE(SUM(CASE WHEN l.match_status = 'matched' THEN 1 ELSE 0 END), 0) AS matched_count,
+            COALESCE(SUM(CASE WHEN l.match_status = 'suggested' THEN 1 ELSE 0 END), 0) AS suggested_count,
+            COALESCE(SUM(CASE WHEN l.match_status = 'unmatched' THEN 1 ELSE 0 END), 0) AS unmatched_count,
+            COALESCE(SUM(CASE WHEN l.match_status = 'ignored' THEN 1 ELSE 0 END), 0) AS ignored_count
+         FROM bank_statement_imports i
+         LEFT JOIN bank_statement_lines l ON l.import_id = i.id
+         WHERE i.id = ?
+         GROUP BY i.id`,
+      )
+      .get(id);
+  },
+
+  getImportByFileHash: (fileHash: string) => {
+    return db
+      .prepare("SELECT * FROM bank_statement_imports WHERE file_hash = ? LIMIT 1")
+      .get(fileHash);
+  },
+
+  getLineById: (lineId: number) => {
+    return db
+      .prepare("SELECT * FROM bank_statement_lines WHERE id = ?")
+      .get(lineId);
+  },
+
+  createImport: (input: BankImportCreateInput): number => {
+    const now = new Date().toISOString();
+    const tx = db.transaction(() => {
+      const importResult = db
+        .prepare(
+          `INSERT INTO bank_statement_imports
+          (account_no, ccy, file_name, file_hash, period_from, period_to, opening_balance, closing_balance, total_credit, total_debit, line_count, linked_account_id, status, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?)`,
+        )
+        .run(
+          input.account_no,
+          input.ccy ?? null,
+          input.file_name,
+          input.file_hash,
+          input.period_from ?? null,
+          input.period_to ?? null,
+          input.opening_balance ?? null,
+          input.closing_balance ?? null,
+          input.total_credit,
+          input.total_debit,
+          input.line_count,
+          input.linked_account_id ?? null,
+          now,
+          now,
+        );
+      const importId = Number(importResult.lastInsertRowid);
+      const insertLine = db.prepare(
+        `INSERT INTO bank_statement_lines
+         (import_id, line_no, post_date, remarks, additional_desc, description_norm, credit_amount, debit_amount, signed_amount, close_balance, line_hash, match_status, suggestion_score, match_confidence, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'unmatched', 0, 0, ?, ?)`,
+      );
+      for (const line of input.lines) {
+        insertLine.run(
+          importId,
+          line.line_no,
+          line.post_date,
+          line.remarks ?? null,
+          line.additional_desc ?? null,
+          normalizeReconText(`${line.remarks || ""} ${line.additional_desc || ""}`),
+          Number(line.credit_amount || 0),
+          Number(line.debit_amount || 0),
+          Number(line.signed_amount || 0),
+          line.close_balance ?? null,
+          line.line_hash,
+          now,
+          now,
+        );
+      }
+      return importId;
+    });
+    const importId = tx();
+    financeReconciliationDb.refreshSuggestions(importId, false);
+    return importId;
+  },
+
+  getLines: (
+    importId: number,
+    status?: "unmatched" | "suggested" | "matched" | "ignored",
+  ): ReconLineWithHints[] => {
+    const where: string[] = ["l.import_id = ?"];
+    const params: unknown[] = [importId];
+    if (status) {
+      where.push("l.match_status = ?");
+      params.push(status);
+    }
+    return db
+      .prepare(
+        `SELECT
+            l.*,
+            mt.type AS matched_type,
+            mt.amount AS matched_amount,
+            mt.txn_date AS matched_txn_date,
+            mt.reference_no AS matched_reference_no,
+            mt.service_label AS matched_service_label,
+            st.type AS suggested_type,
+            st.amount AS suggested_amount,
+            st.txn_date AS suggested_txn_date,
+            st.reference_no AS suggested_reference_no,
+            st.service_label AS suggested_service_label
+         FROM bank_statement_lines l
+         LEFT JOIN transactions mt ON mt.id = l.matched_txn_id
+         LEFT JOIN transactions st ON st.id = l.suggested_txn_id
+         WHERE ${where.join(" AND ")}
+         ORDER BY datetime(l.post_date) ASC, l.line_no ASC, l.id ASC`,
+      )
+      .all(...params) as ReconLineWithHints[];
+  },
+
+  refreshSuggestions: (importId: number, autoMatch = false): number => {
+    const lines = db
+      .prepare(
+        `SELECT id, import_id, post_date, signed_amount, description_norm
+         FROM bank_statement_lines
+         WHERE import_id = ? AND match_status IN ('unmatched', 'suggested')`,
+      )
+      .all(importId) as Array<{
+      id: number;
+      import_id: number;
+      post_date: string;
+      signed_amount: number;
+      description_norm: string | null;
+    }>;
+    const now = new Date().toISOString();
+    let changed = 0;
+
+    for (const line of lines) {
+      const expectedType = line.signed_amount >= 0 ? "income" : "expense";
+      const lineDate = toDateOnly(line.post_date);
+      const from = addDays(lineDate, -2);
+      const to = addDays(lineDate, 2);
+
+      const candidates = db
+        .prepare(
+          `SELECT id, amount, txn_date, reference_no, service_label, notes
+           FROM transactions
+           WHERE status != 'void'
+             AND type = ?
+             AND date(txn_date) BETWEEN date(?) AND date(?)
+           ORDER BY txn_date DESC, id DESC
+           LIMIT 80`,
+        )
+        .all(expectedType, from, to) as Array<{
+        id: number;
+        amount: number;
+        txn_date: string;
+        reference_no: string | null;
+        service_label: string | null;
+        notes: string | null;
+      }>;
+
+      const best = pickBestTxnCandidate(line, candidates);
+      if (!best || best.score < 60) {
+        const result = db
+          .prepare(
+            `UPDATE bank_statement_lines
+             SET match_status = 'unmatched',
+                 suggested_txn_id = NULL,
+                 suggestion_score = 0,
+                 updated_at = ?
+             WHERE id = ?`,
+          )
+          .run(now, line.id);
+        changed += result.changes;
+        continue;
+      }
+
+      if (autoMatch && best.score >= 95) {
+        const alreadyUsed = db
+          .prepare(
+            `SELECT id FROM bank_statement_lines
+             WHERE import_id = ? AND match_status = 'matched' AND matched_txn_id = ? LIMIT 1`,
+          )
+          .get(importId, best.txn_id) as { id: number } | undefined;
+        if (!alreadyUsed) {
+          const result = db
+            .prepare(
+              `UPDATE bank_statement_lines
+               SET match_status = 'matched',
+                   matched_txn_id = ?,
+                   match_confidence = ?,
+                   suggested_txn_id = ?,
+                   suggestion_score = ?,
+                   updated_at = ?
+               WHERE id = ?`,
+            )
+            .run(best.txn_id, best.score, best.txn_id, best.score, now, line.id);
+          changed += result.changes;
+          db.prepare(
+            `INSERT INTO bank_reconciliation_matches (import_id, line_id, txn_id, action, confidence, note, created_at)
+             VALUES (?, ?, ?, 'auto_match', ?, NULL, ?)`,
+          ).run(importId, line.id, best.txn_id, best.score, now);
+          ensureImportInReview(importId);
+          continue;
+        }
+      }
+
+      const result = db
+        .prepare(
+          `UPDATE bank_statement_lines
+           SET match_status = 'suggested',
+               suggested_txn_id = ?,
+               suggestion_score = ?,
+               updated_at = ?
+           WHERE id = ?`,
+        )
+        .run(best.txn_id, best.score, now, line.id);
+      changed += result.changes;
+    }
+
+    return changed;
+  },
+
+  matchLine: (lineId: number, txnId: number, note?: string): boolean => {
+    const line = db
+      .prepare(
+        "SELECT id, import_id, suggested_txn_id, suggestion_score FROM bank_statement_lines WHERE id = ?",
+      )
+      .get(lineId) as
+      | {
+          id: number;
+          import_id: number;
+          suggested_txn_id: number | null;
+          suggestion_score: number;
+        }
+      | undefined;
+    if (!line) return false;
+    const now = new Date().toISOString();
+    const confidence =
+      line.suggested_txn_id === txnId ? line.suggestion_score || 90 : 100;
+    const result = db
+      .prepare(
+        `UPDATE bank_statement_lines
+         SET match_status = 'matched',
+             matched_txn_id = ?,
+             match_confidence = ?,
+             updated_at = ?
+         WHERE id = ?`,
+      )
+      .run(txnId, confidence, now, lineId);
+    if (result.changes > 0) {
+      db.prepare(
+        `INSERT INTO bank_reconciliation_matches (import_id, line_id, txn_id, action, confidence, note, created_at)
+         VALUES (?, ?, ?, 'manual_match', ?, ?, ?)`,
+      ).run(line.import_id, lineId, txnId, confidence, note?.trim() || null, now);
+      ensureImportInReview(line.import_id);
+    }
+    return result.changes > 0;
+  },
+
+  ignoreLine: (lineId: number, note?: string): boolean => {
+    const line = db
+      .prepare("SELECT id, import_id FROM bank_statement_lines WHERE id = ?")
+      .get(lineId) as { id: number; import_id: number } | undefined;
+    if (!line) return false;
+    const now = new Date().toISOString();
+    const result = db
+      .prepare(
+        `UPDATE bank_statement_lines
+         SET match_status = 'ignored',
+             suggested_txn_id = NULL,
+             suggestion_score = 0,
+             matched_txn_id = NULL,
+             match_confidence = 0,
+             updated_at = ?
+         WHERE id = ?`,
+      )
+      .run(now, lineId);
+    if (result.changes > 0) {
+      db.prepare(
+        `INSERT INTO bank_reconciliation_matches (import_id, line_id, txn_id, action, confidence, note, created_at)
+         VALUES (?, ?, NULL, 'ignore', NULL, ?, ?)`,
+      ).run(line.import_id, lineId, note?.trim() || null, now);
+      ensureImportInReview(line.import_id);
+    }
+    return result.changes > 0;
+  },
+
+  unmatchLine: (lineId: number, note?: string): boolean => {
+    const line = db
+      .prepare(
+        "SELECT id, import_id, matched_txn_id FROM bank_statement_lines WHERE id = ?",
+      )
+      .get(lineId) as
+      | { id: number; import_id: number; matched_txn_id: number | null }
+      | undefined;
+    if (!line) return false;
+    const now = new Date().toISOString();
+    const result = db
+      .prepare(
+        `UPDATE bank_statement_lines
+         SET match_status = 'unmatched',
+             matched_txn_id = NULL,
+             match_confidence = 0,
+             updated_at = ?
+         WHERE id = ?`,
+      )
+      .run(now, lineId);
+    if (result.changes > 0) {
+      db.prepare(
+        `INSERT INTO bank_reconciliation_matches (import_id, line_id, txn_id, action, confidence, note, created_at)
+         VALUES (?, ?, ?, 'unmatch', NULL, ?, ?)`,
+      ).run(
+        line.import_id,
+        lineId,
+        line.matched_txn_id ?? null,
+        note?.trim() || null,
+        now,
+      );
+      ensureImportInReview(line.import_id);
+      financeReconciliationDb.refreshSuggestions(line.import_id, false);
+    }
+    return result.changes > 0;
+  },
+
+  createTransactionForLine: (lineId: number): FinanceTransaction | null => {
+    const line = db
+      .prepare(
+        `SELECT l.*, i.linked_account_id
+         FROM bank_statement_lines l
+         JOIN bank_statement_imports i ON i.id = l.import_id
+         WHERE l.id = ?`,
+      )
+      .get(lineId) as
+      | (Record<string, unknown> & {
+          id: number;
+          import_id: number;
+          line_no: number;
+          post_date: string;
+          signed_amount: number;
+          remarks: string | null;
+          additional_desc: string | null;
+          description_norm: string | null;
+          linked_account_id: number | null;
+        })
+      | undefined;
+    if (!line) return null;
+
+    const expected = Math.max(0, Math.round(Math.abs(line.signed_amount || 0)));
+    if (expected <= 0) return null;
+    const descNorm = line.description_norm || "";
+    const rawDesc = `${line.remarks || ""} ${line.additional_desc || ""}`.trim();
+    const txnDate = line.post_date;
+    const referenceNo = `BANK:${line.import_id}:${line.line_no}`;
+    const notes = `[BANK_RECON_IMPORT] ${rawDesc}`.trim();
+
+    let created: FinanceTransaction;
+    if (line.signed_amount >= 0) {
+      const isTithe =
+        descNorm.includes("persepuluhan") || descNorm.includes("perpuluhan");
+      const isOffering = descNorm.includes("persembahan");
+      const subType = isTithe
+        ? "tithe"
+        : isOffering
+          ? "offering"
+          : "other_income";
+      const categoryName = isTithe
+        ? "Persepuluhan"
+        : isOffering
+          ? "Persembahan"
+          : "Donasi";
+      const categoryId = ensureIncomeCategoryId(categoryName);
+      created = financeTransactionDb.create({
+        type: "income",
+        sub_type: subType,
+        category_id: categoryId,
+        account_id: line.linked_account_id ?? null,
+        amount: expected,
+        txn_date: txnDate,
+        payment_method: "transfer",
+        service_label: rawDesc.slice(0, 120) || "Bank Statement Import",
+        reference_no: referenceNo,
+        status: "posted",
+        notes,
+      });
+    } else {
+      const isBankFee =
+        descNorm.includes("biaya adm") ||
+        descNorm.includes("pajak") ||
+        descNorm.includes("transfer fee");
+      const categoryId = ensureExpenseCategoryId(
+        isBankFee ? "Biaya Transfer Bank" : "Operasional Gereja",
+      );
+      created = financeTransactionDb.create({
+        type: "expense",
+        sub_type: "expense",
+        category_id: categoryId,
+        account_id: line.linked_account_id ?? null,
+        amount: expected,
+        txn_date: txnDate,
+        payment_method: "transfer",
+        service_label: rawDesc.slice(0, 120) || "Imported Expense",
+        reference_no: referenceNo,
+        status: "posted",
+        notes,
+      });
+    }
+
+    const now = new Date().toISOString();
+    db.prepare(
+      `UPDATE bank_statement_lines
+       SET match_status = 'matched',
+           matched_txn_id = ?,
+           match_confidence = 100,
+           updated_at = ?
+       WHERE id = ?`,
+    ).run(created.id, now, lineId);
+    db.prepare(
+      `INSERT INTO bank_reconciliation_matches (import_id, line_id, txn_id, action, confidence, note, created_at)
+       VALUES (?, ?, ?, 'create_txn', 100, ?, ?)`,
+    ).run(line.import_id, lineId, created.id, "Created from bank line", now);
+    ensureImportInReview(line.import_id);
+    return created;
+  },
+
+  closeImport: (importId: number, note?: string): { success: boolean; reason?: string } => {
+    const pending = db
+      .prepare(
+        `SELECT COUNT(*) AS count
+         FROM bank_statement_lines
+         WHERE import_id = ? AND match_status IN ('unmatched', 'suggested')`,
+      )
+      .get(importId) as { count: number };
+    if (pending.count > 0) {
+      return {
+        success: false,
+        reason: `Masih ada ${pending.count} baris yang belum direkonsiliasi`,
+      };
+    }
+    const now = new Date().toISOString();
+    const result = db
+      .prepare(
+        `UPDATE bank_statement_imports
+         SET status = 'closed',
+             close_note = ?,
+             closed_at = ?,
+             updated_at = ?
+         WHERE id = ?`,
+      )
+      .run(note?.trim() || null, now, now, importId);
+    if (result.changes > 0) {
+      db.prepare(
+        `INSERT INTO bank_reconciliation_matches (import_id, line_id, txn_id, action, confidence, note, created_at)
+         VALUES (?, NULL, NULL, 'close', NULL, ?, ?)`,
+      ).run(importId, note?.trim() || null, now);
+      return { success: true };
+    }
+    return { success: false, reason: "Import tidak ditemukan" };
+  },
+
+  reopenImport: (importId: number, note?: string): boolean => {
+    const now = new Date().toISOString();
+    const result = db
+      .prepare(
+        `UPDATE bank_statement_imports
+         SET status = 'in_review',
+             updated_at = ?
+         WHERE id = ?`,
+      )
+      .run(now, importId);
+    if (result.changes > 0) {
+      db.prepare(
+        `INSERT INTO bank_reconciliation_matches (import_id, line_id, txn_id, action, confidence, note, created_at)
+         VALUES (?, NULL, NULL, 'reopen', NULL, ?, ?)`,
+      ).run(importId, note?.trim() || null, now);
+      return true;
+    }
+    return false;
+  },
+
+  getReportRows: (importId: number) => {
+    return db
+      .prepare(
+        `SELECT
+            i.account_no,
+            i.period_from,
+            i.period_to,
+            i.status AS import_status,
+            l.line_no,
+            l.post_date,
+            l.remarks,
+            l.additional_desc,
+            l.credit_amount,
+            l.debit_amount,
+            l.signed_amount,
+            l.close_balance,
+            l.match_status,
+            l.suggestion_score,
+            l.match_confidence,
+            t.id AS txn_id,
+            t.type AS txn_type,
+            t.sub_type AS txn_sub_type,
+            t.amount AS txn_amount,
+            t.txn_date,
+            t.reference_no,
+            t.service_label
+         FROM bank_statement_lines l
+         JOIN bank_statement_imports i ON i.id = l.import_id
+         LEFT JOIN transactions t ON t.id = l.matched_txn_id
+         WHERE l.import_id = ?
+         ORDER BY datetime(l.post_date) ASC, l.line_no ASC`,
+      )
+      .all(importId);
   },
 };
 

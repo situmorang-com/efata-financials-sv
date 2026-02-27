@@ -137,3 +137,46 @@ export interface FinanceTransaction {
   created_at: string;
   updated_at: string;
 }
+
+export interface BankStatementImport {
+  id?: number;
+  account_no: string;
+  ccy?: string | null;
+  file_name: string;
+  file_hash: string;
+  period_from?: string | null;
+  period_to?: string | null;
+  opening_balance?: number | null;
+  closing_balance?: number | null;
+  total_credit: number;
+  total_debit: number;
+  line_count: number;
+  linked_account_id?: number | null;
+  status: "open" | "in_review" | "closed";
+  close_note?: string | null;
+  closed_at?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface BankStatementLine {
+  id?: number;
+  import_id: number;
+  line_no: number;
+  post_date: string;
+  remarks?: string | null;
+  additional_desc?: string | null;
+  description_norm?: string | null;
+  credit_amount: number;
+  debit_amount: number;
+  signed_amount: number;
+  close_balance?: number | null;
+  line_hash: string;
+  match_status: "unmatched" | "suggested" | "matched" | "ignored";
+  suggested_txn_id?: number | null;
+  suggestion_score: number;
+  matched_txn_id?: number | null;
+  match_confidence: number;
+  created_at: string;
+  updated_at: string;
+}
