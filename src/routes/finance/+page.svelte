@@ -9,6 +9,7 @@
 	import Clock3 from '@lucide/svelte/icons/clock-3';
 	import FileText from '@lucide/svelte/icons/file-text';
 	import ArrowRight from '@lucide/svelte/icons/arrow-right';
+	import ShieldCheck from '@lucide/svelte/icons/shield-check';
 
 	type Summary = {
 		month: string;
@@ -128,6 +129,13 @@
 					<a href="/finance/reports" class="glass rounded-xl p-3 hover:bg-white/5 transition-colors">
 						<p class="text-white font-medium text-sm">Reports</p>
 						<p class="text-white/50 text-xs mt-1">Ringkasan bulanan dan export</p>
+					</a>
+					<a href="/finance/reconciliation" class="glass rounded-xl p-3 hover:bg-white/5 transition-colors">
+						<p class="text-white font-medium text-sm inline-flex items-center gap-1.5">
+							<ShieldCheck class="w-3.5 h-3.5 text-sky-300" />
+							Reconciliation
+						</p>
+						<p class="text-white/50 text-xs mt-1">Cocokkan mutasi bank dengan ledger</p>
 					</a>
 					<a href="/batches" class="glass rounded-xl p-3 hover:bg-white/5 transition-colors">
 						<p class="text-white font-medium text-sm">Transfer Module</p>
