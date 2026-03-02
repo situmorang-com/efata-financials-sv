@@ -333,6 +333,100 @@ function columnNotNull(table: string, column: string): boolean {
   return Number(col?.notnull || 0) === 1;
 }
 
+function normalizeAccountNumber(value?: string | null): string {
+  return String(value || "").replace(/\D/g, "");
+}
+
+function backfillReconciliationLinkedAccounts(): void {
+  if (!tableExists("bank_statement_imports")) return;
+  if (!tableExists("accounts")) return;
+  if (!columnExists("bank_statement_imports", "linked_account_id")) return;
+
+  const accounts = db
+    .prepare(
+      "SELECT id, account_number FROM accounts WHERE is_active = 1 AND account_number IS NOT NULL",
+    )
+    .all() as Array<{ id: number; account_number: string | null }>;
+
+  const accountMap = new Map<string, number>();
+  const ambiguous = new Set<string>();
+  for (const account of accounts) {
+    const normalized = normalizeAccountNumber(account.account_number);
+    if (!normalized) continue;
+    if (accountMap.has(normalized)) {
+      ambiguous.add(normalized);
+      accountMap.delete(normalized);
+      continue;
+    }
+    if (!ambiguous.has(normalized)) {
+      accountMap.set(normalized, account.id);
+    }
+  }
+
+  const imports = db
+    .prepare(
+      "SELECT id, account_no FROM bank_statement_imports WHERE linked_account_id IS NULL",
+    )
+    .all() as Array<{ id: number; account_no: string | null }>;
+
+  const now = new Date().toISOString();
+  const updateLinked = db.prepare(
+    "UPDATE bank_statement_imports SET linked_account_id = ?, updated_at = ? WHERE id = ?",
+  );
+
+  for (const item of imports) {
+    const normalized = normalizeAccountNumber(item.account_no);
+    const matchId = normalized ? accountMap.get(normalized) : undefined;
+    if (!matchId) continue;
+    updateLinked.run(matchId, now, item.id);
+  }
+}
+
+function backfillReconciledTransactionAccounts(): void {
+  if (!tableExists("transactions")) return;
+  if (!tableExists("bank_statement_imports")) return;
+
+  const rows = db
+    .prepare(
+      `SELECT
+          t.id,
+          t.reference_no,
+          i.linked_account_id
+       FROM transactions t
+       JOIN bank_statement_imports i
+         ON CAST(substr(
+              t.reference_no,
+              6,
+              instr(substr(t.reference_no, 6), ':') - 1
+            ) AS INTEGER) = i.id
+       WHERE t.account_id IS NULL
+         AND t.reference_no LIKE 'BANK:%'
+         AND i.linked_account_id IS NOT NULL`,
+    )
+    .all() as Array<{
+      id: number;
+      reference_no: string | null;
+      linked_account_id: number | null;
+    }>;
+
+  if (rows.length === 0) return;
+
+  const now = new Date().toISOString();
+  const updateTxn = db.prepare(
+    "UPDATE transactions SET account_id = ?, updated_at = ? WHERE id = ?",
+  );
+
+  for (const row of rows) {
+    if (!row.linked_account_id) continue;
+    updateTxn.run(row.linked_account_id, now, row.id);
+  }
+}
+
+function remapReconciliationData(): void {
+  backfillReconciliationLinkedAccounts();
+  backfillReconciledTransactionAccounts();
+}
+
 if (
   tableExists("bank_reconciliation_matches") &&
   columnExists("bank_reconciliation_matches", "line_id") &&
@@ -362,6 +456,8 @@ if (
     DROP TABLE bank_reconciliation_matches_old;
   `);
 }
+
+remapReconciliationData();
 
 // Recipients migrations
 if (!columnExists("recipients", "family_group_id")) {
@@ -1456,6 +1552,18 @@ export const financeAccountDb = {
       | undefined;
   },
 
+  findByAccountNumber: (accountNumber?: string | null): FinanceAccount | undefined => {
+    const normalized = String(accountNumber || "").replace(/\D/g, "");
+    if (!normalized) return undefined;
+    const accounts = db
+      .prepare("SELECT * FROM accounts WHERE is_active = 1 AND account_number IS NOT NULL")
+      .all() as FinanceAccount[];
+    return accounts.find(
+      (account) =>
+        String(account.account_number || "").replace(/\D/g, "") === normalized,
+    );
+  },
+
   create: (data: {
     name: string;
     account_type: FinanceAccount["account_type"];
@@ -1480,7 +1588,7 @@ export const financeAccountDb = {
         now,
         now,
       );
-    return {
+    const created = {
       id: result.lastInsertRowid as number,
       name: data.name,
       account_type: data.account_type,
@@ -1492,6 +1600,8 @@ export const financeAccountDb = {
       created_at: now,
       updated_at: now,
     };
+    remapReconciliationData();
+    return created;
   },
 
   update: (
@@ -1528,7 +1638,11 @@ export const financeAccountDb = {
         now,
         id,
       );
-    return result.changes > 0;
+    if (result.changes > 0) {
+      remapReconciliationData();
+      return true;
+    }
+    return false;
   },
 
   softDelete: (id: number): boolean => {
@@ -1591,9 +1705,29 @@ export const financeTransactionDb = {
     }
 
     const sql = `
-      SELECT t.*
+      SELECT
+        t.*,
+        COALESCE(t.account_id, bi.linked_account_id, fallback_a.id) AS resolved_account_id,
+        COALESCE(bi.linked_account_id, fallback_a.id) AS source_linked_account_id,
+        bi.account_no AS source_account_number,
+        COALESCE(ba.name, fallback_a.name) AS source_account_name,
+        COALESCE(ba.bank_name, fallback_a.bank_name) AS source_account_bank_name
       FROM transactions t
       LEFT JOIN parties p ON p.id = t.party_id
+      LEFT JOIN bank_statement_imports bi
+        ON t.reference_no LIKE 'BANK:%'
+       AND CAST(
+            substr(
+              t.reference_no,
+              6,
+              instr(substr(t.reference_no, 6), ':') - 1
+            ) AS INTEGER
+          ) = bi.id
+      LEFT JOIN accounts ba ON ba.id = bi.linked_account_id
+      LEFT JOIN accounts fallback_a
+        ON bi.linked_account_id IS NULL
+       AND fallback_a.is_active = 1
+       AND fallback_a.account_number = bi.account_no
       ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
       ORDER BY t.txn_date DESC, t.id DESC
     `;
@@ -1602,9 +1736,33 @@ export const financeTransactionDb = {
   },
 
   getById: (id: number): FinanceTransaction | undefined => {
-    return db.prepare("SELECT * FROM transactions WHERE id = ?").get(id) as
-      | FinanceTransaction
-      | undefined;
+    return db
+      .prepare(
+        `SELECT
+           t.*,
+           COALESCE(t.account_id, bi.linked_account_id, fallback_a.id) AS resolved_account_id,
+           COALESCE(bi.linked_account_id, fallback_a.id) AS source_linked_account_id,
+           bi.account_no AS source_account_number,
+           COALESCE(ba.name, fallback_a.name) AS source_account_name,
+           COALESCE(ba.bank_name, fallback_a.bank_name) AS source_account_bank_name
+         FROM transactions t
+         LEFT JOIN bank_statement_imports bi
+           ON t.reference_no LIKE 'BANK:%'
+          AND CAST(
+               substr(
+                 t.reference_no,
+                 6,
+                 instr(substr(t.reference_no, 6), ':') - 1
+               ) AS INTEGER
+             ) = bi.id
+         LEFT JOIN accounts ba ON ba.id = bi.linked_account_id
+         LEFT JOIN accounts fallback_a
+           ON bi.linked_account_id IS NULL
+          AND fallback_a.is_active = 1
+          AND fallback_a.account_number = bi.account_no
+         WHERE t.id = ?`,
+      )
+      .get(id) as FinanceTransaction | undefined;
   },
 
   create: (data: {
@@ -1778,7 +1936,7 @@ export const financeTransactionDb = {
         success: false,
         status: 409,
         error:
-          "Transaksi hasil rekonsiliasi: field inti (jenis/nominal/tanggal/akun) dikunci. Gunakan jurnal penyesuaian untuk koreksi.",
+          "Transaksi ini sudah cocok dengan mutasi bank. Jenis, nominal, tanggal, dan akun sumber dana tidak bisa diubah langsung. Buat jurnal penyesuaian jika perlu koreksi.",
       };
     }
 
@@ -2301,11 +2459,15 @@ export const financeReconciliationDb = {
     return db
       .prepare(
         `SELECT i.*,
+            a.name AS linked_account_name,
+            a.bank_name AS linked_account_bank_name,
+            a.account_number AS linked_account_number,
             COALESCE(SUM(CASE WHEN l.match_status = 'matched' THEN 1 ELSE 0 END), 0) AS matched_count,
             COALESCE(SUM(CASE WHEN l.match_status = 'suggested' THEN 1 ELSE 0 END), 0) AS suggested_count,
             COALESCE(SUM(CASE WHEN l.match_status = 'unmatched' THEN 1 ELSE 0 END), 0) AS unmatched_count,
             COALESCE(SUM(CASE WHEN l.match_status = 'ignored' THEN 1 ELSE 0 END), 0) AS ignored_count
          FROM bank_statement_imports i
+         LEFT JOIN accounts a ON a.id = i.linked_account_id
          LEFT JOIN bank_statement_lines l ON l.import_id = i.id
          GROUP BY i.id
          ORDER BY COALESCE(i.period_from, i.created_at) DESC, i.id DESC`,
@@ -2317,11 +2479,15 @@ export const financeReconciliationDb = {
     return db
       .prepare(
         `SELECT i.*,
+            a.name AS linked_account_name,
+            a.bank_name AS linked_account_bank_name,
+            a.account_number AS linked_account_number,
             COALESCE(SUM(CASE WHEN l.match_status = 'matched' THEN 1 ELSE 0 END), 0) AS matched_count,
             COALESCE(SUM(CASE WHEN l.match_status = 'suggested' THEN 1 ELSE 0 END), 0) AS suggested_count,
             COALESCE(SUM(CASE WHEN l.match_status = 'unmatched' THEN 1 ELSE 0 END), 0) AS unmatched_count,
             COALESCE(SUM(CASE WHEN l.match_status = 'ignored' THEN 1 ELSE 0 END), 0) AS ignored_count
          FROM bank_statement_imports i
+         LEFT JOIN accounts a ON a.id = i.linked_account_id
          LEFT JOIN bank_statement_lines l ON l.import_id = i.id
          WHERE i.id = ?
          GROUP BY i.id`,
@@ -2343,6 +2509,10 @@ export const financeReconciliationDb = {
 
   createImport: (input: BankImportCreateInput): number => {
     const now = new Date().toISOString();
+    const resolvedLinkedAccountId =
+      input.linked_account_id ??
+      financeAccountDb.findByAccountNumber(input.account_no)?.id ??
+      null;
     const tx = db.transaction(() => {
       const importResult = db
         .prepare(
@@ -2362,7 +2532,7 @@ export const financeReconciliationDb = {
           input.total_credit,
           input.total_debit,
           input.line_count,
-          input.linked_account_id ?? null,
+          resolvedLinkedAccountId,
           now,
           now,
         );
