@@ -10,6 +10,7 @@
 	import FileText from '@lucide/svelte/icons/file-text';
 	import ArrowRight from '@lucide/svelte/icons/arrow-right';
 	import ShieldCheck from '@lucide/svelte/icons/shield-check';
+	import Wallet from '@lucide/svelte/icons/wallet';
 
 	type Summary = {
 		month: string;
@@ -136,6 +137,13 @@
 							Reconciliation
 						</p>
 						<p class="text-white/50 text-xs mt-1">Cocokkan mutasi bank dengan ledger</p>
+					</a>
+					<a href="/finance/accounts" class="glass rounded-xl p-3 hover:bg-white/5 transition-colors">
+						<p class="text-white font-medium text-sm inline-flex items-center gap-1.5">
+							<Wallet class="w-3.5 h-3.5 text-amber-300" />
+							Internal Accounts
+						</p>
+						<p class="text-white/50 text-xs mt-1">Kelola akun sumber dana dan nomor rekening internal</p>
 					</a>
 					<a href="/batches" class="glass rounded-xl p-3 hover:bg-white/5 transition-colors">
 						<p class="text-white font-medium text-sm">Transfer Module</p>

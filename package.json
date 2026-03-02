@@ -13,6 +13,7 @@
     "check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
     "seed:finance-dummy": "node scripts/seed-finance-dummy.mjs",
     "generate-secret": "node scripts/generate-secret.js",
+    "repair:reconciliation-accounts": "node scripts/repair-reconciliation-accounts.mjs",
     "clean": "rm -rf .svelte-kit node_modules/.vite"
   },
   "devDependencies": {
@@ -35,7 +36,7 @@
     "@auth/core": "^0.35.0",
     "@auth/sveltekit": "^1.4.0",
     "@types/better-sqlite3": "^7.6.13",
-    "better-sqlite3": "^12.2.0",
+    "better-sqlite3": "^12.6.2",
     "clsx": "^2.1.1",
     "pdf-lib": "^1.17.1",
     "sharp": "^0.34.5",
