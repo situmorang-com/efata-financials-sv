@@ -22,6 +22,10 @@
 		id: number;
 		account_no: string;
 		file_name: string;
+		linked_account_id?: number | null;
+		linked_account_name?: string | null;
+		linked_account_bank_name?: string | null;
+		linked_account_number?: string | null;
 		period_from?: string | null;
 		period_to?: string | null;
 		opening_balance?: number | null;
@@ -99,6 +103,14 @@
 		if (status === 'suggested') return 'bg-amber-500/20 border border-amber-500/35 text-amber-100';
 		if (status === 'ignored') return 'bg-white/10 border border-white/20 text-white/60';
 		return 'bg-rose-500/20 border border-rose-500/35 text-rose-100';
+	}
+
+	function sourceAccountLabel(item: ImportRow): string {
+		if (item.linked_account_name) {
+			const rawNo = item.linked_account_number || item.account_no;
+			return `${item.linked_account_name} (${rawNo})`;
+		}
+		return item.account_no;
 	}
 
 	async function loadImports() {
@@ -381,11 +393,14 @@
 							{selectedImportId === item.id ? 'border-sky-400/50 bg-sky-500/10' : 'border-white/10 hover:border-white/25'}"
 					>
 						<div class="flex items-center justify-between gap-2">
-							<p class="text-white font-medium text-sm truncate">{item.account_no}</p>
+							<p class="text-white font-medium text-sm truncate">{sourceAccountLabel(item)}</p>
 							<span class="text-[10px] px-2 py-0.5 rounded-full {item.status === 'closed' ? 'bg-emerald-500/20 text-emerald-100 border border-emerald-500/35' : item.status === 'in_review' ? 'bg-amber-500/20 text-amber-100 border border-amber-500/35' : 'bg-white/10 text-white/70 border border-white/20'}">
 								{item.status}
 							</span>
 						</div>
+						{#if !item.linked_account_id}
+							<p class="text-amber-200/80 text-[11px] mt-1">Akun sumber dana belum dipetakan</p>
+						{/if}
 						<p class="text-white/55 text-xs mt-1">{dateLabel(item.period_from)} → {dateLabel(item.period_to)}</p>
 						<p class="text-white/45 text-[11px] mt-1 truncate">{item.file_name}</p>
 						<p class="text-white/55 text-xs mt-2">Matched {item.matched_count}/{item.line_count}</p>
@@ -401,7 +416,10 @@
 						<div class="flex flex-wrap items-center gap-2 justify-between">
 							<div class="flex items-center gap-2 flex-wrap text-xs">
 								<span class="text-white/60">Account:</span>
-								<span class="text-white font-medium">{importDetail.account_no}</span>
+								<span class="text-white font-medium">{sourceAccountLabel(importDetail)}</span>
+								{#if !importDetail.linked_account_id}
+									<span class="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-100 border border-amber-500/30">Belum dipetakan</span>
+								{/if}
 								<span class="text-white/30">•</span>
 								<span class="text-white/60">Opening:</span>
 								<span class="text-white">{formatRupiah(importDetail.opening_balance || 0)}</span>
@@ -455,7 +473,7 @@
 									{#each lines as line}
 										<tr class="glass-table-row">
 											<td class="px-3 py-2.5 text-white/75 text-xs">{dateTimeLabel(line.post_date)}</td>
-											<td class="px-3 py-2.5 text-white/80 text-xs max-w-[440px] align-top">
+											<td class="px-3 py-2.5 text-white/80 text-xs max-w-[440px] align-middle">
 												<div class="whitespace-normal break-all leading-snug">{line.remarks || line.additional_desc || '-'}</div>
 											</td>
 											<td class="px-3 py-2.5 text-right text-xs font-mono {line.signed_amount >= 0 ? 'text-emerald-200' : 'text-rose-200'}">

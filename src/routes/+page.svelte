@@ -10,6 +10,7 @@
 	import MessageCircle from '@lucide/svelte/icons/message-circle';
 	import PackagePlus from '@lucide/svelte/icons/package-plus';
 	import Layers from '@lucide/svelte/icons/layers';
+	import Landmark from '@lucide/svelte/icons/landmark';
 
 	let batches = $state<Batch[]>([]);
 	let loading = $state(true);
@@ -126,7 +127,19 @@
 	{/if}
 
 	<!-- Quick links -->
-	<div class="grid grid-cols-1 sm:grid-cols-2 gap-4 stagger">
+	<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 stagger">
+		<a href="/finance" class="glass-card rounded-2xl p-5 hover:bg-white/5 transition-all block lift-on-hover group">
+			<div class="flex items-center gap-3">
+				<div class="w-10 h-10 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-300 flex-shrink-0">
+					<Landmark class="w-5 h-5" />
+				</div>
+				<div>
+					<h3 class="text-white font-semibold">Finance Overview</h3>
+					<p class="text-white/60 text-sm mt-0.5">Lihat ringkasan cash in, out, dan net.</p>
+				</div>
+			</div>
+			<p class="text-white/40 text-xs mt-3">Masuk ke modul keuangan</p>
+		</a>
 		<a href="/batches" class="glass-card rounded-2xl p-5 hover:bg-white/5 transition-all block lift-on-hover group">
 			<div class="flex items-center gap-3">
 				<div class="w-10 h-10 rounded-xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-300 flex-shrink-0">
