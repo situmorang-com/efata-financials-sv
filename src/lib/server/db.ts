@@ -337,6 +337,10 @@ function normalizeAccountNumber(value?: string | null): string {
   return String(value || "").replace(/\D/g, "");
 }
 
+function normalizeAccountNumberSql(expr: string): string {
+  return `replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(${expr}, ' ', ''), '-', ''), '.', ''), '/', ''), '(', ''), ')', ''), '+', ''), '_', ''), '*', ''), '#', '')`;
+}
+
 function backfillReconciliationLinkedAccounts(): void {
   if (!tableExists("bank_statement_imports")) return;
   if (!tableExists("accounts")) return;
@@ -1727,7 +1731,8 @@ export const financeTransactionDb = {
       LEFT JOIN accounts fallback_a
         ON bi.linked_account_id IS NULL
        AND fallback_a.is_active = 1
-       AND fallback_a.account_number = bi.account_no
+       AND fallback_a.account_number IS NOT NULL
+       AND ${normalizeAccountNumberSql("fallback_a.account_number")} = ${normalizeAccountNumberSql("bi.account_no")}
       ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
       ORDER BY t.txn_date DESC, t.id DESC
     `;
@@ -1759,7 +1764,8 @@ export const financeTransactionDb = {
          LEFT JOIN accounts fallback_a
            ON bi.linked_account_id IS NULL
           AND fallback_a.is_active = 1
-          AND fallback_a.account_number = bi.account_no
+          AND fallback_a.account_number IS NOT NULL
+          AND ${normalizeAccountNumberSql("fallback_a.account_number")} = ${normalizeAccountNumberSql("bi.account_no")}
          WHERE t.id = ?`,
       )
       .get(id) as FinanceTransaction | undefined;
