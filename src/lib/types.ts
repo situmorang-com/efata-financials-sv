@@ -136,6 +136,11 @@ export interface FinanceTransaction {
   approved_at?: string | null;
   created_at: string;
   updated_at: string;
+  resolved_account_id?: number | null;
+  source_linked_account_id?: number | null;
+  source_account_number?: string | null;
+  source_account_name?: string | null;
+  source_account_bank_name?: string | null;
 }
 
 export interface BankStatementImport {

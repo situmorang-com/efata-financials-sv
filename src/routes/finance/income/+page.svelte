@@ -49,6 +49,7 @@
 	let editSaving = $state(false);
 	let editCoreLocked = $state(false);
 	let editingItemId = $state<number | null>(null);
+	let editAccountHint = $state('');
 	let editForm = $state({
 		sub_type: 'tithe' as 'tithe' | 'offering' | 'other_income',
 		party_id: '',
@@ -231,7 +232,8 @@
 		editForm.sub_type = item.sub_type === 'expense' ? 'other_income' : item.sub_type;
 		editForm.party_id = item.party_id ? String(item.party_id) : '';
 		editForm.category_id = item.category_id ? String(item.category_id) : '';
-		editForm.account_id = item.account_id ? String(item.account_id) : '';
+		const resolvedAccountId = item.resolved_account_id ?? item.account_id ?? item.source_linked_account_id ?? null;
+		editForm.account_id = resolvedAccountId ? String(resolvedAccountId) : '';
 		editForm.amount = Number(item.amount || 0);
 		editForm.txn_date = item.txn_date ? item.txn_date.slice(0, 10) : new Date().toISOString().slice(0, 10);
 		editForm.payment_method = item.payment_method || 'transfer';
@@ -239,6 +241,15 @@
 		editForm.reference_no = item.reference_no || '';
 		editForm.notes = item.notes || '';
 		editForm.edit_reason = '';
+		if (item.source_account_name) {
+			editAccountHint = item.source_account_bank_name
+				? `${item.source_account_name} • ${item.source_account_bank_name}${item.source_account_number ? ` (${item.source_account_number})` : ''}`
+				: `${item.source_account_name}${item.source_account_number ? ` (${item.source_account_number})` : ''}`;
+		} else if (item.source_account_number) {
+			editAccountHint = `Sumber mutasi bank: ${item.source_account_number} (belum dipetakan ke akun internal)`;
+		} else {
+			editAccountHint = '';
+		}
 		syncEditMappedCategory();
 		syncEditDestination();
 		showEditModal = true;
@@ -248,6 +259,7 @@
 		showEditModal = false;
 		editingItemId = null;
 		editCoreLocked = false;
+		editAccountHint = '';
 		editForm.edit_reason = '';
 	}
 
@@ -521,7 +533,7 @@
 						<p class="text-white/55 text-xs mt-1">Perubahan disimpan ke audit log.</p>
 						{#if editCoreLocked}
 							<p class="text-amber-200/90 text-xs mt-2">
-								Transaksi hasil rekonsiliasi: field inti (jenis, tanggal, nominal, akun) dikunci.
+								Transaksi ini sudah cocok dengan mutasi bank. Jenis, tanggal, nominal, dan akun sumber dana dikunci.
 							</p>
 						{/if}
 					</div>
@@ -563,6 +575,9 @@
 								<option value={String(a.id)}>{a.name}</option>
 							{/each}
 						</select>
+						{#if editAccountHint}
+							<p class="mt-1.5 text-[11px] text-white/55">{editAccountHint}</p>
+						{/if}
 					</div>
 					<div>
 						<label class="block text-white/60 text-xs uppercase tracking-wider mb-1.5">Metode</label>
