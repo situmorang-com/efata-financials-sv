@@ -7,8 +7,19 @@ export const PUT: RequestHandler = async ({ params, request }) => {
   try {
     const data = await request.json();
 
-    // If saturdays_attended or zoom_type is being updated, auto-calculate amount
-    if (data.saturdays_attended !== undefined || data.zoom_type !== undefined) {
+    if (data.custom_zoom_amount !== undefined) {
+      data.custom_zoom_amount = Math.max(
+        0,
+        Math.round(Number(data.custom_zoom_amount) || 0),
+      );
+    }
+
+    // If attendance/zoom fields are updated, auto-calculate amount
+    if (
+      data.saturdays_attended !== undefined ||
+      data.zoom_type !== undefined ||
+      data.custom_zoom_amount !== undefined
+    ) {
       const batch = batchDb.getById(Number(params.id));
       const existing = batchItemDb.getById(Number(params.itemId));
       if (batch && existing) {
@@ -16,17 +27,26 @@ export const PUT: RequestHandler = async ({ params, request }) => {
           // Special batches are fixed-amount; ignore attendance/zoom overrides.
           data.saturdays_attended = existing.saturdays_attended;
           data.zoom_type = existing.zoom_type;
+          data.custom_zoom_amount = existing.custom_zoom_amount;
           data.amount = existing.amount;
         } else {
           const saturdays =
             data.saturdays_attended ?? existing.saturdays_attended;
           const zoomType = data.zoom_type ?? existing.zoom_type;
+          const customZoomAmount = Math.max(
+            0,
+            Math.round(
+              Number(data.custom_zoom_amount ?? existing.custom_zoom_amount) || 0,
+            ),
+          );
+          data.custom_zoom_amount = customZoomAmount;
           data.amount = calculateAmount(
             saturdays,
             batch.transport_rate,
             zoomType,
             batch.zoom_single_rate,
             batch.zoom_family_rate,
+            customZoomAmount,
           );
         }
       }

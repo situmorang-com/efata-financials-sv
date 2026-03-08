@@ -1,3 +1,5 @@
+export type ZoomType = "none" | "single" | "family" | "custom";
+
 export interface Recipient {
   id?: number;
   name: string;
@@ -41,7 +43,8 @@ export interface BatchItem {
   amount: number;
   payment_method: "transfer" | "cash";
   saturdays_attended: number;
-  zoom_type: "none" | "single" | "family";
+  zoom_type: ZoomType;
+  custom_zoom_amount: number;
   transfer_status: "pending" | "done";
   notify_status: "pending" | "sent" | "skipped";
   transfer_at?: string;
@@ -68,9 +71,10 @@ export interface BatchItem {
 export function calculateAmount(
   saturdays: number,
   transportRate: number,
-  zoomType: "none" | "single" | "family",
+  zoomType: ZoomType,
   zoomSingleRate: number,
   zoomFamilyRate: number,
+  customZoomAmount: number = 0,
 ): number {
   const transport = saturdays * transportRate;
   const zoom =
@@ -78,6 +82,8 @@ export function calculateAmount(
       ? zoomSingleRate
       : zoomType === "family"
         ? zoomFamilyRate
+        : zoomType === "custom"
+          ? Math.max(0, Math.round(customZoomAmount || 0))
         : 0;
   return transport + zoom;
 }

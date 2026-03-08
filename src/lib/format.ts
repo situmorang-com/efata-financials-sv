@@ -20,7 +20,7 @@ export function generateWhatsAppMessage(
 	details?: {
 		saturdays_attended: number;
 		transport_rate: number;
-		zoom_type: 'none' | 'single' | 'family';
+		zoom_type: 'none' | 'single' | 'family' | 'custom';
 		zoom_amount: number;
 	},
 	proofUrl?: string
@@ -33,7 +33,12 @@ export function generateWhatsAppMessage(
 			lines.push(`- Transport ${details.saturdays_attended} Sabat x ${formatRupiah(details.transport_rate)} = ${formatRupiah(transportTotal)}`);
 		}
 		if (details.zoom_type !== 'none') {
-			const zoomLabel = details.zoom_type === 'single' ? 'sendiri' : 'keluarga';
+			const zoomLabel =
+				details.zoom_type === 'single'
+					? 'sendiri'
+					: details.zoom_type === 'family'
+						? 'keluarga'
+						: 'manual';
 			lines.push(`- Zoom (${zoomLabel}) = ${formatRupiah(details.zoom_amount)}`);
 		}
 
@@ -61,7 +66,7 @@ export function generateWhatsAppUrl(
 	details?: {
 		saturdays_attended: number;
 		transport_rate: number;
-		zoom_type: 'none' | 'single' | 'family';
+		zoom_type: 'none' | 'single' | 'family' | 'custom';
 		zoom_amount: number;
 	},
 	proofUrl?: string

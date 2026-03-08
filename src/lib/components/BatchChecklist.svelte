@@ -1,5 +1,5 @@
 <script lang="ts">
-	import type { Batch, BatchItem } from '$lib/types.js';
+	import type { Batch, BatchItem, ZoomType } from '$lib/types.js';
 	import { calculateAmount } from '$lib/types.js';
 	import { formatRupiah } from '$lib/format.js';
 	import ProgressBar from './ProgressBar.svelte';
@@ -176,6 +176,7 @@
 			items = Array.isArray(itemsPayload)
 				? (itemsPayload as BatchItem[]).map((item) => ({
 					...item,
+					custom_zoom_amount: Math.max(0, Math.round(item.custom_zoom_amount || 0)),
 					payment_method: normalizePaymentMethod(item.payment_method)
 				}))
 				: [];
@@ -237,7 +238,14 @@
 		if (!ensureEditMode()) return;
 		if (!batch) return;
 		const oldSat = item.saturdays_attended;
-		const newAmount = calculateAmount(newSaturdays, batch.transport_rate, item.zoom_type, batch.zoom_single_rate, batch.zoom_family_rate);
+		const newAmount = calculateAmount(
+			newSaturdays,
+			batch.transport_rate,
+			item.zoom_type,
+			batch.zoom_single_rate,
+			batch.zoom_family_rate,
+			item.custom_zoom_amount
+		);
 		// Optimistic update
 		item.saturdays_attended = newSaturdays;
 		item.amount = newAmount;
@@ -250,32 +258,97 @@
 		} catch (e) {
 			// Revert on error
 			item.saturdays_attended = oldSat;
-			item.amount = calculateAmount(oldSat, batch.transport_rate, item.zoom_type, batch.zoom_single_rate, batch.zoom_family_rate);
+			item.amount = calculateAmount(
+				oldSat,
+				batch.transport_rate,
+				item.zoom_type,
+				batch.zoom_single_rate,
+				batch.zoom_family_rate,
+				item.custom_zoom_amount
+			);
 			console.error('Failed to update saturdays:', e);
 			addToast('Gagal mengubah kehadiran', 'error');
 		}
 	}
 
-	async function updateZoomType(item: BatchItem, newType: 'none' | 'single' | 'family') {
+	async function updateZoomType(item: BatchItem, newType: ZoomType) {
 		if (!ensureEditMode()) return;
 		if (!batch) return;
 		const oldType = item.zoom_type;
-		const newAmount = calculateAmount(item.saturdays_attended, batch.transport_rate, newType, batch.zoom_single_rate, batch.zoom_family_rate);
+		const oldCustom = item.custom_zoom_amount;
+		const fallbackManual =
+			oldType === 'single'
+				? batch.zoom_single_rate
+				: oldType === 'family'
+					? batch.zoom_family_rate
+					: oldCustom || batch.zoom_single_rate;
+		const nextCustom = newType === 'custom' ? Math.max(0, Math.round(fallbackManual || 0)) : oldCustom;
+		const newAmount = calculateAmount(
+			item.saturdays_attended,
+			batch.transport_rate,
+			newType,
+			batch.zoom_single_rate,
+			batch.zoom_family_rate,
+			nextCustom
+		);
 		// Optimistic update
 		item.zoom_type = newType;
+		item.custom_zoom_amount = nextCustom;
 		item.amount = newAmount;
 		try {
 			await fetch(`/api/batches/${batchId}/items/${item.id}`, {
 				method: 'PUT',
 				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ zoom_type: newType })
+				body: JSON.stringify({
+					zoom_type: newType,
+					custom_zoom_amount: nextCustom
+				})
 			});
 		} catch (e) {
 			// Revert on error
 			item.zoom_type = oldType;
-			item.amount = calculateAmount(item.saturdays_attended, batch.transport_rate, oldType, batch.zoom_single_rate, batch.zoom_family_rate);
+			item.custom_zoom_amount = oldCustom;
+			item.amount = calculateAmount(
+				item.saturdays_attended,
+				batch.transport_rate,
+				oldType,
+				batch.zoom_single_rate,
+				batch.zoom_family_rate,
+				oldCustom
+			);
 			console.error('Failed to update zoom:', e);
 			addToast('Gagal mengubah zoom', 'error');
+		}
+	}
+
+	async function updateCustomZoomAmount(item: BatchItem, newAmount: number) {
+		if (!ensureEditMode()) return;
+		if (!batch) return;
+		const sanitized = Math.max(0, Math.round(newAmount || 0));
+		const oldCustom = item.custom_zoom_amount;
+		const oldAmount = item.amount;
+		item.custom_zoom_amount = sanitized;
+		item.amount = calculateAmount(
+			item.saturdays_attended,
+			batch.transport_rate,
+			item.zoom_type,
+			batch.zoom_single_rate,
+			batch.zoom_family_rate,
+			sanitized
+		);
+		try {
+			await fetch(`/api/batches/${batchId}/items/${item.id}`, {
+				method: 'PUT',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					custom_zoom_amount: sanitized
+				})
+			});
+		} catch (e) {
+			item.custom_zoom_amount = oldCustom;
+			item.amount = oldAmount;
+			console.error('Failed to update custom zoom amount:', e);
+			addToast('Gagal mengubah nominal zoom manual', 'error');
 		}
 	}
 
@@ -470,7 +543,13 @@
 
 	function getZoomAmount(item: BatchItem): number {
 		if (!batch) return 0;
-		return item.zoom_type === 'single' ? batch.zoom_single_rate : item.zoom_type === 'family' ? batch.zoom_family_rate : 0;
+		return item.zoom_type === 'single'
+			? batch.zoom_single_rate
+			: item.zoom_type === 'family'
+				? batch.zoom_family_rate
+				: item.zoom_type === 'custom'
+					? Math.max(0, Math.round(item.custom_zoom_amount || 0))
+					: 0;
 	}
 
 	function formatCurrencyInput(value: number): string {
@@ -764,13 +843,31 @@
 											/>
 										</td>
 										<td class="px-3 py-2.5 text-center">
-											<ZoomBadge
-												zoomType={item.zoom_type}
-												singleRate={batch.zoom_single_rate}
-												familyRate={batch.zoom_family_rate}
-												disabled={!isEditMode}
-												onchange={(t) => updateZoomType(item, t)}
-											/>
+											<div class="flex flex-col items-center gap-1">
+												<ZoomBadge
+													zoomType={item.zoom_type}
+													singleRate={batch.zoom_single_rate}
+													familyRate={batch.zoom_family_rate}
+													customAmount={item.custom_zoom_amount}
+													disabled={!isEditMode}
+													onchange={(t) => updateZoomType(item, t)}
+												/>
+												{#if item.zoom_type === 'custom'}
+													<input
+														type="text"
+														inputmode="numeric"
+														disabled={!isEditMode}
+														class="glass-input rounded-md px-2 py-1 text-[11px] text-white/90 w-[110px] text-center"
+														value={formatCurrencyInput(item.custom_zoom_amount || 0)}
+														onfocus={(e) => { (e.target as HTMLInputElement).value = String(item.custom_zoom_amount || 0); }}
+														onblur={(e) => {
+															const parsed = parseCurrencyInput((e.target as HTMLInputElement).value);
+															updateCustomZoomAmount(item, parsed);
+															(e.target as HTMLInputElement).value = formatCurrencyInput(parsed);
+														}}
+													/>
+												{/if}
+											</div>
 										</td>
 									{/if}
 									<td class="px-3 py-2.5 text-right">
@@ -991,13 +1088,31 @@
 								</div>
 								<div class="flex items-center justify-between">
 									<span class="text-white/40 text-xs w-12">Zoom</span>
-									<ZoomBadge
-										zoomType={item.zoom_type}
-										singleRate={batch.zoom_single_rate}
-										familyRate={batch.zoom_family_rate}
-										disabled={!isEditMode}
-										onchange={(t) => updateZoomType(item, t)}
-									/>
+									<div class="flex flex-col items-end gap-1">
+										<ZoomBadge
+											zoomType={item.zoom_type}
+											singleRate={batch.zoom_single_rate}
+											familyRate={batch.zoom_family_rate}
+											customAmount={item.custom_zoom_amount}
+											disabled={!isEditMode}
+											onchange={(t) => updateZoomType(item, t)}
+										/>
+										{#if item.zoom_type === 'custom'}
+											<input
+												type="text"
+												inputmode="numeric"
+												disabled={!isEditMode}
+												class="glass-input rounded-md px-2 py-1 text-[11px] text-white/90 w-[120px] text-right"
+												value={formatCurrencyInput(item.custom_zoom_amount || 0)}
+												onfocus={(e) => { (e.target as HTMLInputElement).value = String(item.custom_zoom_amount || 0); }}
+												onblur={(e) => {
+													const parsed = parseCurrencyInput((e.target as HTMLInputElement).value);
+													updateCustomZoomAmount(item, parsed);
+													(e.target as HTMLInputElement).value = formatCurrencyInput(parsed);
+												}}
+											/>
+										{/if}
+									</div>
 								</div>
 							</div>
 						{/if}

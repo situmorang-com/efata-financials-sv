@@ -12,6 +12,7 @@ import type {
   Recipient,
   Batch,
   BatchItem,
+  ZoomType,
   FinanceCategory,
   FinanceParty,
   FinanceAccount,
@@ -111,6 +112,7 @@ db.exec(`
     payment_method TEXT NOT NULL DEFAULT 'transfer',
     saturdays_attended INTEGER NOT NULL DEFAULT 0,
     zoom_type TEXT NOT NULL DEFAULT 'none',
+    custom_zoom_amount INTEGER NOT NULL DEFAULT 0,
     transfer_status TEXT NOT NULL DEFAULT 'pending',
     notify_status TEXT NOT NULL DEFAULT 'pending',
     transfer_at TEXT,
@@ -524,6 +526,11 @@ if (!columnExists("batch_items", "zoom_type")) {
     "ALTER TABLE batch_items ADD COLUMN zoom_type TEXT NOT NULL DEFAULT 'none'",
   );
 }
+if (!columnExists("batch_items", "custom_zoom_amount")) {
+  db.exec(
+    "ALTER TABLE batch_items ADD COLUMN custom_zoom_amount INTEGER NOT NULL DEFAULT 0",
+  );
+}
 if (!columnExists("batch_items", "transfer_fee")) {
   db.exec(
     "ALTER TABLE batch_items ADD COLUMN transfer_fee INTEGER NOT NULL DEFAULT 0",
@@ -620,13 +627,13 @@ const selectBatchById = db.prepare(`
 
 // --- Prepared statements - Batch Items ---
 const insertBatchItem = db.prepare(`
-  INSERT INTO batch_items (batch_id, recipient_id, amount, payment_method, saturdays_attended, zoom_type, transfer_fee, transfer_status, notify_status, created_at, updated_at)
-  VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', 'pending', ?, ?)
+  INSERT INTO batch_items (batch_id, recipient_id, amount, payment_method, saturdays_attended, zoom_type, custom_zoom_amount, transfer_fee, transfer_status, notify_status, created_at, updated_at)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'pending', ?, ?)
 `);
 
 const updateBatchItem = db.prepare(`
   UPDATE batch_items
-  SET amount = ?, payment_method = ?, saturdays_attended = ?, zoom_type = ?, transfer_fee = ?, transfer_status = ?, notify_status = ?, transfer_at = ?, notified_at = ?, notes = ?, transfer_proof = ?, updated_at = ?
+  SET amount = ?, payment_method = ?, saturdays_attended = ?, zoom_type = ?, custom_zoom_amount = ?, transfer_fee = ?, transfer_status = ?, notify_status = ?, transfer_at = ?, notified_at = ?, notes = ?, transfer_proof = ?, updated_at = ?
   WHERE id = ?
 `);
 
@@ -635,7 +642,7 @@ const deleteBatchItem = db.prepare("DELETE FROM batch_items WHERE id = ?");
 const selectBatchItems = db.prepare(`
   SELECT
     bi.id, bi.batch_id, bi.recipient_id, bi.amount, bi.payment_method, bi.saturdays_attended,
-    bi.zoom_type, bi.transfer_fee, bi.transfer_status, bi.notify_status, bi.transfer_at,
+    bi.zoom_type, bi.custom_zoom_amount, bi.transfer_fee, bi.transfer_status, bi.notify_status, bi.transfer_at,
     bi.notified_at, bi.notes, bi.created_at, bi.updated_at,
     (bi.transfer_proof IS NOT NULL AND bi.transfer_proof != '') AS has_transfer_proof,
     r.name AS recipient_name,
@@ -1101,7 +1108,8 @@ export const batchItemDb = {
     recipientId: number,
     amount: number,
     saturdaysAttended: number = 0,
-    zoomType: string = "none",
+    zoomType: ZoomType = "none",
+    customZoomAmount: number = 0,
     transferFee: number = 0,
   ): BatchItem | null => {
     const exists = checkBatchItemExists.get(batchId, recipientId);
@@ -1114,6 +1122,7 @@ export const batchItemDb = {
       "transfer",
       saturdaysAttended,
       zoomType,
+      Math.max(0, Math.round(customZoomAmount || 0)),
       transferFee,
       now,
       now,
@@ -1125,7 +1134,8 @@ export const batchItemDb = {
       amount,
       payment_method: "transfer",
       saturdays_attended: saturdaysAttended,
-      zoom_type: zoomType as "none" | "single" | "family",
+      zoom_type: zoomType,
+      custom_zoom_amount: Math.max(0, Math.round(customZoomAmount || 0)),
       transfer_fee: transferFee,
       transfer_status: "pending",
       notify_status: "pending",
@@ -1158,6 +1168,7 @@ export const batchItemDb = {
       normalizedPaymentMethod,
       updated.saturdays_attended,
       updated.zoom_type,
+      Math.max(0, Math.round(updated.custom_zoom_amount || 0)),
       updated.transfer_fee ?? 0,
       updated.transfer_status,
       updated.notify_status,
@@ -1208,6 +1219,7 @@ export const batchItemDb = {
               0,
               "none",
               0,
+              0,
               now,
               now,
             );
@@ -1215,7 +1227,7 @@ export const batchItemDb = {
             continue;
           }
           // Determine zoom type from recipient data
-          let zoomType = "none";
+          let zoomType: ZoomType = "none";
           if (r.zoom_eligible) {
             zoomType = r.family_group_id ? "family" : "single";
           }
@@ -1223,9 +1235,10 @@ export const batchItemDb = {
           const amount = calculateAmount(
             0,
             batch.transport_rate,
-            zoomType as "none" | "single" | "family",
+            zoomType,
             batch.zoom_single_rate,
             batch.zoom_family_rate,
+            0,
           );
           insertBatchItem.run(
             batchId,
@@ -1234,6 +1247,7 @@ export const batchItemDb = {
             "transfer",
             0,
             zoomType,
+            0,
             0,
             now,
             now,
@@ -1355,6 +1369,7 @@ export const batchItemDb = {
           item.zoom_type,
           batch.zoom_single_rate,
           batch.zoom_family_rate,
+          item.custom_zoom_amount,
         );
         const result = db
           .prepare(
