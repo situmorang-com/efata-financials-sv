@@ -10,7 +10,7 @@
 		details?: {
 			saturdays_attended: number;
 			transport_rate: number;
-			zoom_type: 'none' | 'single' | 'family';
+			zoom_type: 'none' | 'single' | 'family' | 'custom';
 			zoom_amount: number;
 		};
 		proofUrl?: string;

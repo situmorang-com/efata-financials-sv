@@ -27,6 +27,10 @@ export const POST: RequestHandler = async ({ params, request }) => {
       batch.type === "special" ? 0 : (data.saturdays_attended ?? 0);
     const zoomType =
       batch.type === "special" ? "none" : (data.zoom_type ?? "none");
+    const customZoomAmount =
+      zoomType === "custom"
+        ? Math.max(0, Math.round(Number(data.custom_zoom_amount) || 0))
+        : 0;
     const amount =
       batch.type === "special"
         ? (data.amount ?? batch.default_amount)
@@ -37,6 +41,7 @@ export const POST: RequestHandler = async ({ params, request }) => {
             zoomType,
             batch.zoom_single_rate,
             batch.zoom_family_rate,
+            customZoomAmount,
           ));
     const item = batchItemDb.create(
       Number(params.id),
@@ -44,6 +49,7 @@ export const POST: RequestHandler = async ({ params, request }) => {
       amount,
       saturdays,
       zoomType,
+      customZoomAmount,
     );
     if (!item) {
       return json(
