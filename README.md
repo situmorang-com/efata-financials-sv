@@ -13,9 +13,7 @@ EFATA Transfer Checklist acts as a single operations cockpit for monthly aid dis
 
 ## 🔐 Authentication
 
-This application uses **Google SSO** with email whitelist. Only authorized users can access the system:
-- `edmundsitumorang@gmail.com`
-- `situmeangirhen@gmail.com`
+This application uses **Google SSO** with an allowlist. Only authorized users can access the system.
 
 ## Features
 - 🔒 Google SSO authentication with email whitelist
