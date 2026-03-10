@@ -2,6 +2,15 @@
 
 A simple internal app to manage monthly EFATA transfer batches: track attendance, calculate amounts for transport/zoom, mark transfers, notify via WhatsApp, and export batch reports as PDF.
 
+## App Preview
+
+![EFATA Transfer Checklist app preview](docs/images/efata-app-preview.svg)
+
+EFATA Transfer Checklist acts as a single operations cockpit for monthly aid disbursement and finance visibility:
+- Manage transfer batches with live progress across recipients
+- Capture transfer proofs, mark WhatsApp notifications, and auto-complete workflows
+- Keep finance ledgers aligned with transfer spending, fees, and reconciliation
+
 ## 🔐 Authentication
 
 This application uses **Google SSO** with email whitelist. Only authorized users can access the system:
@@ -122,4 +131,3 @@ Planning docs for multi-module finance system:
 ## 📄 License
 
 Private internal application for EFATA organization.
-
