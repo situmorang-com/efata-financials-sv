@@ -42,7 +42,8 @@ type ProofAttachment = {
   totalFee: number;
   latestTransferAt: string | null;
   membersLabel: string;
-  label: string;
+  payeeLabel: string;
+  accountLabel: string;
   bytes: Buffer;
 };
 
@@ -504,8 +505,14 @@ export const GET: RequestHandler = async ({ params }) => {
         String(a.recipient_name || "").localeCompare(String(b.recipient_name || "")),
       );
       const lead = members.find((member) => !!member.transfer_to_id) || members[0];
-      const label =
+      const payeeLabel =
         lead.transfer_to_name || lead.actual_account_holder || lead.recipient_name || "-";
+      const accountLabel =
+        lead.actual_bank_name && lead.actual_account_number
+          ? `${lead.actual_bank_name} ${lead.actual_account_number}`
+          : lead.bank_name && lead.account_number
+            ? `${lead.bank_name} ${lead.account_number}`
+            : "";
       const totalAmount = members.reduce(
         (sum, member) => sum + (member.amount || 0),
         0,
@@ -526,7 +533,8 @@ export const GET: RequestHandler = async ({ params }) => {
         totalFee,
         latestTransferAt,
         membersLabel: members.map((member) => member.recipient_name || "-").join(", "),
-        label,
+        payeeLabel,
+        accountLabel,
         bytes: bucket.bytes,
       };
     });
@@ -558,31 +566,44 @@ export const GET: RequestHandler = async ({ params }) => {
           borderColor: rgb(0.85, 0.9, 0.95),
           borderWidth: 1,
         });
-        const memberCountLabel =
-          attachment.items.length > 1 ? ` (${attachment.items.length} anggota)` : "";
+        const firstRecipient = attachment.items[0]?.recipient_name || attachment.payeeLabel;
+        const viaLabel = attachment.accountLabel
+          ? `via ${attachment.payeeLabel} (${attachment.accountLabel})`
+          : `via ${attachment.payeeLabel}`;
+        const hasMultipleRecipients = attachment.items.length > 1;
         drawText(
-          `${i + 1}. ${attachment.label}${memberCountLabel}`,
+          `${i + 1}. ${firstRecipient}`,
           margin + 12,
           y - 20,
           11,
           true,
           rgb(0.15, 0.2, 0.25),
         );
+        if (hasMultipleRecipients) {
+          drawText(
+            `Penerima: ${clip(attachment.membersLabel, 90)}`,
+            margin + 12,
+            y - 34,
+            8.6,
+            false,
+            rgb(0.38, 0.42, 0.46),
+          );
+        }
         drawText(
-          `Jumlah: ${formatRupiah(attachment.totalAmount)} • Fee: ${formatRupiah(attachment.totalFee)} • Tanggal: ${formatDate(attachment.latestTransferAt)}`,
+          viaLabel,
           margin + 12,
-          y - 36,
+          y - (hasMultipleRecipients ? 46 : 34),
           9,
           false,
           rgb(0.28, 0.32, 0.36),
         );
         drawText(
-          `Anggota: ${clip(attachment.membersLabel, 86)}`,
+          `Jumlah: ${formatRupiah(attachment.totalAmount)} • Fee: ${formatRupiah(attachment.totalFee)} • Tanggal: ${formatDate(attachment.latestTransferAt)}`,
           margin + 12,
-          y - 48,
-          8.2,
+          y - (hasMultipleRecipients ? 58 : 46),
+          9,
           false,
-          rgb(0.38, 0.42, 0.46),
+          rgb(0.28, 0.32, 0.36),
         );
 
         try {
@@ -593,7 +614,7 @@ export const GET: RequestHandler = async ({ params }) => {
             .toBuffer();
           const embedded = await pdf.embedJpg(jpegBytes);
           const maxW = contentWidth - 24;
-          const maxH = boxH - 70;
+          const maxH = boxH - (hasMultipleRecipients ? 84 : 72);
           const scale = Math.min(
             maxW / embedded.width,
             maxH / embedded.height,
