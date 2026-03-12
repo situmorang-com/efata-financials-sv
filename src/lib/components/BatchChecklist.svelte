@@ -267,7 +267,7 @@
 			...base,
 			is_family_transfer: true,
 			family_member_names: group.members.map((member) => member.recipient_name || '').filter(Boolean),
-			family_total_transfer: group.totalSend,
+			family_total_transfer: group.totalAmount,
 			family_member_details: group.members.map((member) => ({
 				name: member.recipient_name || '-',
 				saturdays_attended: member.saturdays_attended,
