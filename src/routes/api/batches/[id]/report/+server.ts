@@ -558,8 +558,10 @@ export const GET: RequestHandler = async ({ params }) => {
           borderColor: rgb(0.85, 0.9, 0.95),
           borderWidth: 1,
         });
+        const memberCountLabel =
+          attachment.items.length > 1 ? ` (${attachment.items.length} anggota)` : "";
         drawText(
-          `${i + 1}. Via ${attachment.label} (${attachment.items.length} anggota)`,
+          `${i + 1}. ${attachment.label}${memberCountLabel}`,
           margin + 12,
           y - 20,
           11,
