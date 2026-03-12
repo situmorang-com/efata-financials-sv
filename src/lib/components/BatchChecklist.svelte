@@ -685,6 +685,48 @@
 		return digits ? Number(digits) : 0;
 	}
 
+	async function prepareFamilyProofImage(file: File): Promise<File> {
+		if (!file.type.startsWith('image/')) {
+			throw new Error('File harus berupa gambar');
+		}
+		return new Promise((resolve, reject) => {
+			const img = new window.Image();
+			const objectUrl = URL.createObjectURL(file);
+			img.onload = async () => {
+				try {
+					URL.revokeObjectURL(objectUrl);
+					const width = Math.max(1, Math.round(img.width * 0.7));
+					const height = Math.max(1, Math.round(img.height * 0.7));
+					const canvas = document.createElement('canvas');
+					canvas.width = width;
+					canvas.height = height;
+					const ctx = canvas.getContext('2d');
+					if (!ctx) {
+						reject(new Error('Gagal memproses gambar'));
+						return;
+					}
+					ctx.drawImage(img, 0, 0, width, height);
+					const blob = await new Promise<Blob | null>((result) =>
+						canvas.toBlob(result, 'image/jpeg', 0.85)
+					);
+					if (!blob || blob.size === 0) {
+						reject(new Error('Format gambar tidak didukung'));
+						return;
+					}
+					const baseName = file.name.replace(/\.[^.]+$/, '') || 'family-proof';
+					resolve(new File([blob], `${baseName}.jpg`, { type: 'image/jpeg' }));
+				} catch (error) {
+					reject(error instanceof Error ? error : new Error('Gagal memproses gambar'));
+				}
+			};
+			img.onerror = () => {
+				URL.revokeObjectURL(objectUrl);
+				reject(new Error('Format gambar tidak didukung. Gunakan JPG/PNG atau screenshot.'));
+			};
+			img.src = objectUrl;
+		});
+	}
+
 	function openFamilyTransfer(group: FamilyTransferGroup) {
 		selectedFamilyGroupKey = group.key;
 		familyTransferDate = formatDateInput(group.latestTransferAt) || new Date().toISOString().slice(0, 10);
@@ -708,6 +750,7 @@
 
 		familyTransferSubmitting = true;
 		try {
+			const preparedFile = await prepareFamilyProofImage(familyTransferFile);
 			const formData = new FormData();
 			formData.set(
 				'item_ids',
@@ -716,7 +759,7 @@
 			formData.set('lead_item_id', String(selectedFamilyGroup.leadItemId));
 			formData.set('transfer_fee', String(parseCurrencyInput(familyTransferFeeInput)));
 			formData.set('transfer_at', familyTransferDate || new Date().toISOString().slice(0, 10));
-			formData.set('proof', familyTransferFile);
+			formData.set('proof', preparedFile);
 
 			const res = await fetch(`/api/batches/${batchId}/family-transfer`, {
 				method: 'POST',
