@@ -36,21 +36,6 @@ function clip(text: string, max = 24): string {
   return text.length > max ? `${text.slice(0, max - 1)}…` : text;
 }
 
-function normalizeAccountNumber(value?: string | null): string {
-  return String(value || "").replace(/\D/g, "");
-}
-
-type FamilyTransferSummary = {
-  key: string;
-  payeeName: string;
-  accountLabel: string;
-  members: BatchItem[];
-  totalAmount: number;
-  totalFee: number;
-  totalTransfer: number;
-  latestTransferAt: string | null;
-};
-
 type ProofAttachment = {
   items: BatchItem[];
   totalAmount: number;
@@ -60,78 +45,6 @@ type ProofAttachment = {
   label: string;
   bytes: Buffer;
 };
-
-function buildFamilyTransferSummaries(items: BatchItem[]): FamilyTransferSummary[] {
-  const grouped = new Map<string, BatchItem[]>();
-
-  for (const item of items) {
-    if (
-      normalizePaymentMethod(item.payment_method) !== "transfer" ||
-      item.transfer_status !== "done"
-    ) {
-      continue;
-    }
-    const bank = String(item.actual_bank_name || item.bank_name || "")
-      .trim()
-      .toLowerCase();
-    const account = normalizeAccountNumber(
-      item.actual_account_number || item.account_number,
-    );
-    const accountKey = account
-      ? `acct:${bank}:${account}`
-      : item.transfer_to_id
-        ? `to:${item.transfer_to_id}`
-        : `recipient:${item.recipient_id}`;
-    const familyKey = item.family_group_id ?? 0;
-    const key = `${familyKey}:${accountKey}`;
-    if (!grouped.has(key)) grouped.set(key, []);
-    grouped.get(key)!.push(item);
-  }
-
-  const summaries: FamilyTransferSummary[] = [];
-  for (const [key, members] of grouped.entries()) {
-    if (members.length < 2) continue;
-    const sortedMembers = [...members].sort((a, b) =>
-      String(a.recipient_name || "").localeCompare(String(b.recipient_name || "")),
-    );
-    const lead =
-      sortedMembers.find((member) => !!member.transfer_to_id) || sortedMembers[0];
-    const payeeName =
-      lead.transfer_to_name ||
-      lead.actual_account_holder ||
-      lead.recipient_name ||
-      "-";
-    const accountLabel = `${
-      lead.actual_bank_name || lead.bank_name || "-"
-    } ${lead.actual_account_number || lead.account_number || "-"}`;
-    const totalAmount = sortedMembers.reduce(
-      (sum, member) => sum + (member.amount || 0),
-      0,
-    );
-    const totalFee = sortedMembers.reduce(
-      (sum, member) => sum + (member.transfer_fee || 0),
-      0,
-    );
-    const latestTransferAt =
-      sortedMembers
-        .map((member) => member.transfer_at || "")
-        .filter(Boolean)
-        .sort()
-        .at(-1) || null;
-    summaries.push({
-      key,
-      payeeName,
-      accountLabel,
-      members: sortedMembers,
-      totalAmount,
-      totalFee,
-      totalTransfer: totalAmount + totalFee,
-      latestTransferAt,
-    });
-  }
-
-  return summaries.sort((a, b) => a.payeeName.localeCompare(b.payeeName));
-}
 
 export const GET: RequestHandler = async ({ params }) => {
   try {
@@ -171,7 +84,6 @@ export const GET: RequestHandler = async ({ params }) => {
       )
       .reduce((sum, i) => sum + (i.amount || 0), 0);
     const totalPaid = transferAmountTotal + transferFeeTotal + cashTotal;
-    const familyTransferSummaries = buildFamilyTransferSummaries(items);
 
     const pdf = await PDFDocument.create();
     const font = await pdf.embedFont(StandardFonts.Helvetica);
@@ -432,105 +344,6 @@ export const GET: RequestHandler = async ({ params }) => {
       rgb(0.19, 0.25, 0.35),
     );
     y -= 36;
-
-    if (familyTransferSummaries.length > 0) {
-      if (y < margin + 120) addPage();
-      page.drawRectangle({
-        x: margin,
-        y: y - 18,
-        width: contentWidth,
-        height: 18,
-        color: rgb(0.99, 0.95, 0.88),
-        borderColor: rgb(0.9, 0.82, 0.64),
-        borderWidth: 0.8,
-      });
-      drawText(
-        "TRANSFER KELUARGA (1 rekening untuk beberapa penerima)",
-        margin + 8,
-        y - 12,
-        8,
-        true,
-        rgb(0.45, 0.33, 0.1),
-      );
-      y -= 18;
-
-      for (let i = 0; i < familyTransferSummaries.length; i++) {
-        const summary = familyTransferSummaries[i];
-        const rowHeight = 26;
-        if (y < margin + rowHeight + 8) {
-          addPage();
-          page.drawRectangle({
-            x: margin,
-            y: y - 18,
-            width: contentWidth,
-            height: 18,
-            color: rgb(0.99, 0.95, 0.88),
-            borderColor: rgb(0.9, 0.82, 0.64),
-            borderWidth: 0.8,
-          });
-          drawText(
-            "TRANSFER KELUARGA (lanjutan)",
-            margin + 8,
-            y - 12,
-            8,
-            true,
-            rgb(0.45, 0.33, 0.1),
-          );
-          y -= 18;
-        }
-        if (i % 2 === 0) {
-          page.drawRectangle({
-            x: margin,
-            y: y - rowHeight,
-            width: contentWidth,
-            height: rowHeight,
-            color: rgb(0.995, 0.997, 1),
-          });
-        }
-        drawText(
-          `${i + 1}. Via ${clip(summary.payeeName, 26)} (${summary.members.length} anggota)`,
-          margin + 8,
-          y - 11,
-          8.2,
-          true,
-        );
-        drawText(
-          clip(summary.accountLabel, 45),
-          margin + 8,
-          y - 21,
-          7.5,
-          false,
-          rgb(0.35, 0.39, 0.43),
-        );
-        const totalsText = `${formatRupiah(summary.totalAmount)} + Fee ${formatRupiah(summary.totalFee)} = ${formatRupiah(summary.totalTransfer)}`;
-        drawText(
-          clip(totalsText, 60),
-          margin + 290,
-          y - 11,
-          8,
-          true,
-          rgb(0.17, 0.25, 0.33),
-        );
-        drawText(
-          `Tgl: ${formatDate(summary.latestTransferAt)}`,
-          margin + 290,
-          y - 21,
-          7.5,
-          false,
-          rgb(0.35, 0.39, 0.43),
-        );
-        y -= rowHeight;
-      }
-      drawText(
-        "Catatan: Dana anggota pada daftar di atas ditransfer melalui satu penanggung rekening.",
-        margin + 8,
-        y - 2,
-        8,
-        false,
-        rgb(0.39, 0.34, 0.24),
-      );
-      y -= 18;
-    }
 
     // Transaction table
     const headers = [
