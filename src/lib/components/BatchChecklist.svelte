@@ -1275,6 +1275,12 @@
 												zoom_amount: getZoomAmount(item)
 											}}
 											proofUrl={item.has_transfer_proof ? getProofUrl(item) : undefined}
+											transferInfo={{
+												is_family_transfer: !!item.family_group_id,
+												transfer_to_name: item.transfer_to_name || item.actual_account_holder || item.recipient_name,
+												actual_bank_name: item.actual_bank_name || item.bank_name,
+												actual_account_number: item.actual_account_number || item.account_number
+											}}
 											notifyStatus={item.notify_status}
 											onNotified={() => handleNotify(item)}
 										/>
@@ -1465,6 +1471,12 @@
 										zoom_amount: getZoomAmount(item)
 									}}
 									proofUrl={item.has_transfer_proof ? getProofUrl(item) : undefined}
+									transferInfo={{
+										is_family_transfer: !!item.family_group_id,
+										transfer_to_name: item.transfer_to_name || item.actual_account_holder || item.recipient_name,
+										actual_bank_name: item.actual_bank_name || item.bank_name,
+										actual_account_number: item.actual_account_number || item.account_number
+									}}
 									notifyStatus={item.notify_status}
 									onNotified={() => handleNotify(item)}
 								/>

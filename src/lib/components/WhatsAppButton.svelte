@@ -2,7 +2,7 @@
 	import { generateWhatsAppUrl } from '$lib/format.js';
 	import Check from '@lucide/svelte/icons/check';
 
-	let { phone, name, amount, disabled = false, details, proofUrl, notifyStatus = 'pending', onNotified }: {
+	let { phone, name, amount, disabled = false, details, proofUrl, transferInfo, notifyStatus = 'pending', onNotified }: {
 		phone: string;
 		name: string;
 		amount: number;
@@ -14,13 +14,19 @@
 			zoom_amount: number;
 		};
 		proofUrl?: string;
+		transferInfo?: {
+			is_family_transfer?: boolean;
+			transfer_to_name?: string;
+			actual_bank_name?: string;
+			actual_account_number?: string;
+		};
 		notifyStatus?: 'pending' | 'sent' | 'skipped';
 		onNotified?: (status: 'sent') => void;
 	} = $props();
 
 	function openWhatsApp() {
 		if (disabled || !phone) return;
-		const url = generateWhatsAppUrl(phone, name, amount, details, proofUrl);
+		const url = generateWhatsAppUrl(phone, name, amount, details, proofUrl, transferInfo);
 		window.open(url, '_blank');
 		// Auto-mark as notified
 		if (notifyStatus !== 'sent' && onNotified) {
