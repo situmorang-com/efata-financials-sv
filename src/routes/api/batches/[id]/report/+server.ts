@@ -77,10 +77,10 @@ function buildFamilyTransferSummaries(items: BatchItem[]): FamilyTransferSummary
     const account = normalizeAccountNumber(
       item.actual_account_number || item.account_number,
     );
-    const accountKey = item.transfer_to_id
-      ? `to:${item.transfer_to_id}`
-      : account
-        ? `acct:${bank}:${account}`
+    const accountKey = account
+      ? `acct:${bank}:${account}`
+      : item.transfer_to_id
+        ? `to:${item.transfer_to_id}`
         : `recipient:${item.recipient_id}`;
     const familyKey = item.family_group_id ?? 0;
     const key = `${familyKey}:${accountKey}`;
