@@ -194,7 +194,7 @@ export function generateWhatsAppUrl(
 ): string {
 	const cleanPhone = cleanPhoneForWhatsApp(phone);
 	const message = generateWhatsAppMessage(name, amount, details, proofUrl, transferInfo);
-	return `https://wa.me/${cleanPhone}?text=${encodeURIComponent(message)}`;
+	return `https://api.whatsapp.com/send?phone=${cleanPhone}&text=${encodeURIComponent(message)}`;
 }
 
 export function formatDate(dateString: string): string {
