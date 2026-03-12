@@ -23,14 +23,29 @@ export function generateWhatsAppMessage(
 		zoom_type: 'none' | 'single' | 'family' | 'custom';
 		zoom_amount: number;
 	},
-	proofUrl?: string
+	proofUrl?: string,
+	transferInfo?: {
+		is_family_transfer?: boolean;
+		transfer_to_name?: string;
+		actual_bank_name?: string;
+		actual_account_number?: string;
+	}
 ): string {
+	const isFamilyTransfer = !!transferInfo?.is_family_transfer;
+	const payeeName = transferInfo?.transfer_to_name?.trim() || name;
+	const accountBank = transferInfo?.actual_bank_name?.trim() || '';
+	const accountNumber = transferInfo?.actual_account_number?.trim() || '';
+	const accountLabel =
+		accountBank || accountNumber
+			? `${accountBank}${accountBank && accountNumber ? ' ' : ''}${accountNumber}`.trim()
+			: '';
+
 	if (details && (details.saturdays_attended > 0 || details.zoom_type !== 'none')) {
 		const transportTotal = details.saturdays_attended * details.transport_rate;
-		const lines = [`Halo ${name}, dana Tuli EFATA bulan ini:`];
+		const lines = [`Halo ${name} 👋`, '', `💙 Dana Tuli EFATA bulan ini:`];
 
 		if (details.saturdays_attended > 0) {
-			lines.push(`- Transport ${details.saturdays_attended} Sabat x ${formatRupiah(details.transport_rate)} = ${formatRupiah(transportTotal)}`);
+			lines.push(`• 🚐 Transport ${details.saturdays_attended} Sabat x ${formatRupiah(details.transport_rate)} = ${formatRupiah(transportTotal)}`);
 		}
 		if (details.zoom_type !== 'none') {
 			const zoomLabel =
@@ -39,22 +54,46 @@ export function generateWhatsAppMessage(
 					: details.zoom_type === 'family'
 						? 'keluarga'
 						: 'manual';
-			lines.push(`- Zoom (${zoomLabel}) = ${formatRupiah(details.zoom_amount)}`);
+			lines.push(`• 🎥 Zoom (${zoomLabel}) = ${formatRupiah(details.zoom_amount)}`);
 		}
 
-		lines.push(`- *Total: ${formatRupiah(amount)}*`);
-		lines.push(`sudah ditransfer ke rekening Anda. Mohon dicek. Terima kasih. GBU`);
+		lines.push(`• ✅ *Total hak ${name}: ${formatRupiah(amount)}*`);
+
+		if (isFamilyTransfer) {
+			lines.push('');
+			lines.push('👨‍👩‍👧‍👦 *Transfer keluarga (1 rekening):*');
+			lines.push(`• 👤 Ditransfer melalui: ${payeeName}`);
+			if (accountLabel) {
+				lines.push(`• 🏦 Rekening tujuan: ${accountLabel}`);
+			}
+			lines.push('Mohon dicek ya 🙏');
+		} else {
+			if (accountLabel) {
+				lines.push(`\n🏦 Sudah ditransfer ke rekening: ${accountLabel}`);
+			} else {
+				lines.push('\n🏦 Sudah ditransfer ke rekening Anda');
+			}
+			lines.push('Mohon dicek ya 🙏');
+		}
+		lines.push('Terima kasih. Tuhan memberkati 🤍');
 
 		if (proofUrl) {
 			lines.push('');
-			lines.push(`Bukti transfer: ${proofUrl}`);
+			lines.push(`🧾 Bukti transfer: ${proofUrl}`);
 		}
 
 		return lines.join('\n');
 	}
-	let msg = `Halo ${name}, dana Tuli EFATA sebesar ${formatRupiah(amount)} sudah ditransfer ke rekening Anda. Mohon dicek. Terima kasih. GBU`;
+	const accountSentence = accountLabel
+		? `🏦 Rekening tujuan: ${accountLabel}`
+		: '🏦 Rekening tujuan: rekening Anda';
+	let msg = `Halo ${name} 👋\n\n💙 Dana Tuli EFATA sebesar *${formatRupiah(amount)}* sudah ditransfer.\n${accountSentence}`;
+	if (isFamilyTransfer) {
+		msg += `\n👨‍👩‍👧‍👦 Transfer keluarga melalui: ${payeeName}`;
+	}
+	msg += '\nMohon dicek ya 🙏\nTerima kasih. Tuhan memberkati 🤍';
 	if (proofUrl) {
-		msg += `\n\nBukti transfer: ${proofUrl}`;
+		msg += `\n\n🧾 Bukti transfer: ${proofUrl}`;
 	}
 	return msg;
 }
@@ -69,10 +108,16 @@ export function generateWhatsAppUrl(
 		zoom_type: 'none' | 'single' | 'family' | 'custom';
 		zoom_amount: number;
 	},
-	proofUrl?: string
+	proofUrl?: string,
+	transferInfo?: {
+		is_family_transfer?: boolean;
+		transfer_to_name?: string;
+		actual_bank_name?: string;
+		actual_account_number?: string;
+	}
 ): string {
 	const cleanPhone = cleanPhoneForWhatsApp(phone);
-	const message = generateWhatsAppMessage(name, amount, details, proofUrl);
+	const message = generateWhatsAppMessage(name, amount, details, proofUrl, transferInfo);
 	return `https://wa.me/${cleanPhone}?text=${encodeURIComponent(message)}`;
 }
 
