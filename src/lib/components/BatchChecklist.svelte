@@ -220,6 +220,47 @@
 			? familyTransferGroups.find(group => group.key === selectedFamilyGroupKey) || null
 			: null
 	);
+	let familyGroupByItemId = $derived(
+		(() => {
+			const map = new Map<number, FamilyTransferGroup>();
+			for (const group of familyTransferGroups) {
+				for (const member of group.members) {
+					if (member.id) {
+						map.set(member.id, group);
+					}
+				}
+			}
+			return map;
+		})()
+	);
+
+	function buildTransferInfo(item: BatchItem): {
+		is_family_transfer?: boolean;
+		transfer_to_name?: string;
+		actual_bank_name?: string;
+		actual_account_number?: string;
+		family_member_names?: string[];
+		family_total_transfer?: number;
+	} {
+		const base = {
+			transfer_to_name: item.transfer_to_name || item.actual_account_holder || item.recipient_name,
+			actual_bank_name: item.actual_bank_name || item.bank_name,
+			actual_account_number: item.actual_account_number || item.account_number
+		};
+		if (!item.id) {
+			return base;
+		}
+		const group = familyGroupByItemId.get(item.id);
+		if (!group) {
+			return base;
+		}
+		return {
+			...base,
+			is_family_transfer: true,
+			family_member_names: group.members.map((member) => member.recipient_name || '').filter(Boolean),
+			family_total_transfer: group.totalSend
+		};
+	}
 
 	async function updatePaymentMethod(item: BatchItem, method: 'transfer' | 'cash') {
 		if (!ensureEditMode()) return;
@@ -1275,12 +1316,7 @@
 												zoom_amount: getZoomAmount(item)
 											}}
 											proofUrl={item.has_transfer_proof ? getProofUrl(item) : undefined}
-											transferInfo={{
-												is_family_transfer: !!item.family_group_id,
-												transfer_to_name: item.transfer_to_name || item.actual_account_holder || item.recipient_name,
-												actual_bank_name: item.actual_bank_name || item.bank_name,
-												actual_account_number: item.actual_account_number || item.account_number
-											}}
+											transferInfo={buildTransferInfo(item)}
 											notifyStatus={item.notify_status}
 											onNotified={() => handleNotify(item)}
 										/>
@@ -1471,12 +1507,7 @@
 										zoom_amount: getZoomAmount(item)
 									}}
 									proofUrl={item.has_transfer_proof ? getProofUrl(item) : undefined}
-									transferInfo={{
-										is_family_transfer: !!item.family_group_id,
-										transfer_to_name: item.transfer_to_name || item.actual_account_holder || item.recipient_name,
-										actual_bank_name: item.actual_bank_name || item.bank_name,
-										actual_account_number: item.actual_account_number || item.account_number
-									}}
+									transferInfo={buildTransferInfo(item)}
 									notifyStatus={item.notify_status}
 									onNotified={() => handleNotify(item)}
 								/>
