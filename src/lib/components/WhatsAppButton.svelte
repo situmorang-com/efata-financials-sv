@@ -19,6 +19,8 @@
 			transfer_to_name?: string;
 			actual_bank_name?: string;
 			actual_account_number?: string;
+			family_member_names?: string[];
+			family_total_transfer?: number;
 		};
 		notifyStatus?: 'pending' | 'sent' | 'skipped';
 		onNotified?: (status: 'sent') => void;

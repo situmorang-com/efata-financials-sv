@@ -29,6 +29,8 @@ export function generateWhatsAppMessage(
 		transfer_to_name?: string;
 		actual_bank_name?: string;
 		actual_account_number?: string;
+		family_member_names?: string[];
+		family_total_transfer?: number;
 	}
 ): string {
 	const isFamilyTransfer = !!transferInfo?.is_family_transfer;
@@ -39,13 +41,56 @@ export function generateWhatsAppMessage(
 		accountBank || accountNumber
 			? `${accountBank}${accountBank && accountNumber ? ' ' : ''}${accountNumber}`.trim()
 			: '';
+	const familyMembers = Array.from(
+		new Set(
+			(transferInfo?.family_member_names || [])
+				.map((member) => String(member || '').trim())
+				.filter(Boolean)
+		)
+	);
+	const otherFamilyMembers = familyMembers.filter(
+		(member) => member.toLowerCase() !== name.toLowerCase()
+	);
+	const familyTotalTransfer = Math.max(
+		0,
+		Math.round(Number(transferInfo?.family_total_transfer) || 0)
+	);
+
+	if (isFamilyTransfer) {
+		const lines = [`Halo ${payeeName},`, '', '✅ Transfer dana Tuli EFATA bulan ini sudah dilakukan.'];
+		lines.push('');
+		lines.push('☑️ Transfer keluarga (1 rekening):');
+		lines.push(`➡️ Melalui: ${payeeName}`);
+		if (accountLabel) {
+			lines.push(`➡️ Rekening tujuan: ${accountLabel}`);
+		}
+		if (otherFamilyMembers.length > 0) {
+			lines.push(`➡️ Anggota lain: ${otherFamilyMembers.join(', ')}`);
+		} else if (familyMembers.length > 1) {
+			lines.push(`➡️ Anggota keluarga: ${familyMembers.join(', ')}`);
+		}
+		lines.push(
+			`✅ Total transfer ke rekening ini: ${formatRupiah(
+				familyTotalTransfer > 0 ? familyTotalTransfer : amount
+			)}`
+		);
+		lines.push('Mohon dicek ya.');
+		lines.push('Terima kasih. Tuhan memberkati.');
+
+		if (proofUrl) {
+			lines.push('');
+			lines.push(`✅ Bukti transfer: ${proofUrl}`);
+		}
+
+		return lines.join('\n');
+	}
 
 	if (details && (details.saturdays_attended > 0 || details.zoom_type !== 'none')) {
 		const transportTotal = details.saturdays_attended * details.transport_rate;
-		const lines = [`Halo ${name} 👋`, '', `💙 Dana Tuli EFATA bulan ini:`];
+		const lines = [`Halo ${name},`, '', `✅ Dana Tuli EFATA bulan ini:`];
 
 		if (details.saturdays_attended > 0) {
-			lines.push(`• 🚐 Transport ${details.saturdays_attended} Sabat x ${formatRupiah(details.transport_rate)} = ${formatRupiah(transportTotal)}`);
+			lines.push(`• Transport ${details.saturdays_attended} Sabat x ${formatRupiah(details.transport_rate)} = ${formatRupiah(transportTotal)}`);
 		}
 		if (details.zoom_type !== 'none') {
 			const zoomLabel =
@@ -54,46 +99,32 @@ export function generateWhatsAppMessage(
 					: details.zoom_type === 'family'
 						? 'keluarga'
 						: 'manual';
-			lines.push(`• 🎥 Zoom (${zoomLabel}) = ${formatRupiah(details.zoom_amount)}`);
+			lines.push(`• Zoom (${zoomLabel}) = ${formatRupiah(details.zoom_amount)}`);
 		}
 
-		lines.push(`• ✅ *Total hak ${name}: ${formatRupiah(amount)}*`);
-
-		if (isFamilyTransfer) {
-			lines.push('');
-			lines.push('👨‍👩‍👧‍👦 *Transfer keluarga (1 rekening):*');
-			lines.push(`• 👤 Ditransfer melalui: ${payeeName}`);
-			if (accountLabel) {
-				lines.push(`• 🏦 Rekening tujuan: ${accountLabel}`);
-			}
-			lines.push('Mohon dicek ya 🙏');
+		lines.push(`• *Total: ${formatRupiah(amount)}*`);
+		if (accountLabel) {
+			lines.push(`\n➡️ Sudah ditransfer ke rekening: ${accountLabel}`);
 		} else {
-			if (accountLabel) {
-				lines.push(`\n🏦 Sudah ditransfer ke rekening: ${accountLabel}`);
-			} else {
-				lines.push('\n🏦 Sudah ditransfer ke rekening Anda');
-			}
-			lines.push('Mohon dicek ya 🙏');
+			lines.push('\n➡️ Sudah ditransfer ke rekening Anda');
 		}
-		lines.push('Terima kasih. Tuhan memberkati 🤍');
+		lines.push('Mohon dicek ya.');
+		lines.push('Terima kasih. Tuhan memberkati.');
 
 		if (proofUrl) {
 			lines.push('');
-			lines.push(`🧾 Bukti transfer: ${proofUrl}`);
+			lines.push(`✅ Bukti transfer: ${proofUrl}`);
 		}
 
 		return lines.join('\n');
 	}
 	const accountSentence = accountLabel
-		? `🏦 Rekening tujuan: ${accountLabel}`
-		: '🏦 Rekening tujuan: rekening Anda';
-	let msg = `Halo ${name} 👋\n\n💙 Dana Tuli EFATA sebesar *${formatRupiah(amount)}* sudah ditransfer.\n${accountSentence}`;
-	if (isFamilyTransfer) {
-		msg += `\n👨‍👩‍👧‍👦 Transfer keluarga melalui: ${payeeName}`;
-	}
-	msg += '\nMohon dicek ya 🙏\nTerima kasih. Tuhan memberkati 🤍';
+		? `➡️ Rekening tujuan: ${accountLabel}`
+		: '➡️ Rekening tujuan: rekening Anda';
+	let msg = `Halo ${name},\n\n✅ Dana Tuli EFATA sebesar *${formatRupiah(amount)}* sudah ditransfer.\n${accountSentence}`;
+	msg += '\nMohon dicek ya.\nTerima kasih. Tuhan memberkati.';
 	if (proofUrl) {
-		msg += `\n\n🧾 Bukti transfer: ${proofUrl}`;
+		msg += `\n\n✅ Bukti transfer: ${proofUrl}`;
 	}
 	return msg;
 }
@@ -114,6 +145,8 @@ export function generateWhatsAppUrl(
 		transfer_to_name?: string;
 		actual_bank_name?: string;
 		actual_account_number?: string;
+		family_member_names?: string[];
+		family_total_transfer?: number;
 	}
 ): string {
 	const cleanPhone = cleanPhoneForWhatsApp(phone);
