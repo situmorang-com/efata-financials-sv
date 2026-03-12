@@ -124,27 +124,41 @@ export function generateWhatsAppMessage(
 
 	if (details && (details.saturdays_attended > 0 || details.zoom_type !== 'none')) {
 		const transportTotal = details.saturdays_attended * details.transport_rate;
-		const lines = [`Halo ${name},`, '', `✅ Dana Tuli EFATA bulan ini:`];
+		const lines = [
+			`Halo ${name},`,
+			'',
+			`✅ Transfer bantuan Tuli EFATA ${batchLabel} sudah dilakukan.`,
+			'',
+			'☑️ Transfer perorangan:'
+		];
 
+		if (accountLabel) {
+			lines.push(`➡️ Rekening tujuan: ${accountLabel}`);
+		} else {
+			lines.push('➡️ Rekening tujuan: rekening Anda');
+		}
+		lines.push(`✅ Total transfer ke rekening ini: ${formatRupiah(amount)}`);
+
+		lines.push('');
+		lines.push('📋 Kehadiran:');
+		lines.push(`- ${name}`);
 		if (details.saturdays_attended > 0) {
-			lines.push(`• Transport ${details.saturdays_attended} Sabat x ${formatRupiah(details.transport_rate)} = ${formatRupiah(transportTotal)}`);
+			lines.push(`↳ ${details.saturdays_attended} sabat`);
 		}
 		if (details.zoom_type !== 'none') {
 			const zoomLabel =
 				details.zoom_type === 'single'
-					? 'sendiri'
+					? 'zoom'
 					: details.zoom_type === 'family'
-						? 'keluarga'
-						: 'manual';
-			lines.push(`• Zoom (${zoomLabel}) = ${formatRupiah(details.zoom_amount)}`);
+						? 'zoom'
+						: 'zoom';
+			const zoomSessions = Math.max(0, details.saturdays_attended || 0);
+			if (zoomSessions > 0) {
+				lines.push(`↳ ${zoomSessions} rabu malam (${zoomLabel})`);
+			}
 		}
 
-		lines.push(`• *Total: ${formatRupiah(amount)}*`);
-		if (accountLabel) {
-			lines.push(`\n➡️ Sudah ditransfer ke rekening: ${accountLabel}`);
-		} else {
-			lines.push('\n➡️ Sudah ditransfer ke rekening Anda');
-		}
+		lines.push('');
 		lines.push('Mohon dicek ya.');
 		lines.push('Terima kasih. Tuhan memberkati.');
 
