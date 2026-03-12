@@ -63,6 +63,12 @@ export const POST: RequestHandler = async ({ params, request }) => {
     if (!(file instanceof File)) {
       return json({ error: "Proof image is required" }, { status: 400 });
     }
+    if (!String(file.type || "").startsWith("image/")) {
+      return json(
+        { error: "Format file tidak valid. Gunakan gambar JPG/PNG." },
+        { status: 400 },
+      );
+    }
 
     const rawBuffer = Buffer.from(await file.arrayBuffer());
     if (rawBuffer.length === 0) {
@@ -82,11 +88,32 @@ export const POST: RequestHandler = async ({ params, request }) => {
     const leadItem =
       selectedItems.find((item) => item.id === leadItemId) || selectedItems[0];
 
-    const compressed = await sharp(rawBuffer)
-      .rotate()
-      .resize(1200, 1600, { fit: "inside", withoutEnlargement: true })
-      .avif({ quality: 30 })
-      .toBuffer();
+    let compressed: Buffer;
+    try {
+      compressed = await sharp(rawBuffer)
+        .rotate()
+        .resize(1200, 1600, { fit: "inside", withoutEnlargement: true })
+        .avif({ quality: 30 })
+        .toBuffer();
+    } catch (error) {
+      const mime = String(file.type || "").toLowerCase();
+      if (mime.includes("heic") || mime.includes("heif")) {
+        return json(
+          {
+            error:
+              "Format HEIC/HEIF belum didukung. Gunakan JPG/PNG atau screenshot.",
+          },
+          { status: 400 },
+        );
+      }
+      return json(
+        {
+          error:
+            "Gambar tidak bisa diproses. Gunakan JPG/PNG atau screenshot.",
+        },
+        { status: 400 },
+      );
+    }
 
     const parts = [
       batch.description ? filenamePart(batch.description) : "",
@@ -124,6 +151,14 @@ export const POST: RequestHandler = async ({ params, request }) => {
     });
   } catch (error) {
     console.error("Error creating family transfer proof:", error);
-    return json({ error: "Failed to save family transfer proof" }, { status: 500 });
+    return json(
+      {
+        error:
+          error instanceof Error
+            ? `Failed to save family transfer proof: ${error.message}`
+            : "Failed to save family transfer proof",
+      },
+      { status: 500 },
+    );
   }
 };
