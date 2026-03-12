@@ -241,11 +241,20 @@
 		actual_account_number?: string;
 		family_member_names?: string[];
 		family_total_transfer?: number;
+		batch_label?: string;
+		family_member_details?: Array<{
+			name: string;
+			saturdays_attended?: number;
+			zoom_sessions?: number;
+			zoom_label?: string;
+		}>;
 	} {
+		const batchLabel = (batch?.name || 'bulan ini').replace(/^transfer\s+/i, '');
 		const base = {
 			transfer_to_name: item.transfer_to_name || item.actual_account_holder || item.recipient_name,
 			actual_bank_name: item.actual_bank_name || item.bank_name,
-			actual_account_number: item.actual_account_number || item.account_number
+			actual_account_number: item.actual_account_number || item.account_number,
+			batch_label: batchLabel
 		};
 		if (!item.id) {
 			return base;
@@ -258,7 +267,19 @@
 			...base,
 			is_family_transfer: true,
 			family_member_names: group.members.map((member) => member.recipient_name || '').filter(Boolean),
-			family_total_transfer: group.totalSend
+			family_total_transfer: group.totalSend,
+			family_member_details: group.members.map((member) => ({
+				name: member.recipient_name || '-',
+				saturdays_attended: member.saturdays_attended,
+				zoom_sessions:
+					member.zoom_type && member.zoom_type !== 'none'
+						? Math.max(0, Number(batch?.total_saturdays || 0))
+						: 0,
+				zoom_label:
+					member.zoom_type && member.zoom_type !== 'none'
+						? 'zoom'
+						: undefined
+			}))
 		};
 	}
 
