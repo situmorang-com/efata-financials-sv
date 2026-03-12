@@ -1086,6 +1086,42 @@ function voidBatchTransferExpense(batchId: number): void {
   voidLegacyPerItemTransferExpenses(batchId);
 }
 
+function countProofUsage(filename: string, excludeItemIds: number[] = []): number {
+  if (!filename) return 0;
+  const normalizedExcludes = Array.from(
+    new Set(excludeItemIds.filter((id) => Number.isInteger(id) && id > 0)),
+  );
+  if (normalizedExcludes.length === 0) {
+    const row = db
+      .prepare(
+        "SELECT COUNT(1) as count FROM batch_items WHERE transfer_proof = ?",
+      )
+      .get(filename) as { count: number } | undefined;
+    return Number(row?.count || 0);
+  }
+  const placeholders = normalizedExcludes.map(() => "?").join(",");
+  const row = db
+    .prepare(
+      `SELECT COUNT(1) as count
+       FROM batch_items
+       WHERE transfer_proof = ?
+         AND id NOT IN (${placeholders})`,
+    )
+    .get(filename, ...normalizedExcludes) as { count: number } | undefined;
+  return Number(row?.count || 0);
+}
+
+function cleanupProofFileIfUnused(
+  filename?: string | null,
+  excludeItemIds: number[] = [],
+): void {
+  if (!filename || filename.startsWith("data:")) return;
+  const usage = countProofUsage(filename, excludeItemIds);
+  if (usage === 0) {
+    deleteProofFile(filename);
+  }
+}
+
 export const batchItemDb = {
   getByBatchId: (batchId: number): BatchItem[] => {
     return (selectBatchItems.all(batchId) as BatchItem[]).map((item) => ({
@@ -1268,18 +1304,14 @@ export const batchItemDb = {
   },
 
   setProof: (id: number, filename: string | null): boolean => {
-    // If clearing proof, delete the old file
-    if (!filename) {
-      const existing = db
-        .prepare("SELECT transfer_proof FROM batch_items WHERE id = ?")
-        .get(id) as { transfer_proof: string | null } | undefined;
-      if (
-        existing?.transfer_proof &&
-        !existing.transfer_proof.startsWith("data:")
-      ) {
-        deleteProofFile(existing.transfer_proof);
-      }
-    }
+    const existing = db
+      .prepare("SELECT batch_id, transfer_proof FROM batch_items WHERE id = ?")
+      .get(id) as
+      | { batch_id: number; transfer_proof: string | null }
+      | undefined;
+    if (!existing) return false;
+
+    const oldProof = existing.transfer_proof ?? null;
     const now = new Date().toISOString();
     const result = db
       .prepare(
@@ -1294,12 +1326,93 @@ export const batchItemDb = {
       );
     const changed = result.changes > 0;
     if (changed) {
-      const item = selectBatchItemById.get(id) as BatchItem | undefined;
-      if (item?.batch_id) {
-        syncBatchTransferExpense(item.batch_id);
+      if (oldProof && oldProof !== filename) {
+        cleanupProofFileIfUnused(oldProof, [id]);
       }
+      syncBatchTransferExpense(existing.batch_id);
     }
     return changed;
+  },
+
+  setProofForGroup: (
+    itemIds: number[],
+    filename: string | null,
+    opts?: {
+      transferAt?: string | null;
+      groupTransferFee?: number;
+      leadItemId?: number | null;
+    },
+  ): number => {
+    const uniqueIds = Array.from(
+      new Set(
+        itemIds
+          .map((id) => Number(id))
+          .filter((id) => Number.isInteger(id) && id > 0),
+      ),
+    );
+    if (uniqueIds.length === 0) return 0;
+
+    const now = new Date().toISOString();
+    const transferAt =
+      opts?.transferAt === undefined
+        ? now
+        : opts.transferAt
+          ? opts.transferAt
+          : null;
+    const sanitizedGroupFee = Math.max(
+      0,
+      Math.round(Number(opts?.groupTransferFee) || 0),
+    );
+    const leadItemId =
+      opts?.leadItemId && uniqueIds.includes(Number(opts.leadItemId))
+        ? Number(opts.leadItemId)
+        : uniqueIds[0];
+    const oldProofs = db
+      .prepare(
+        `SELECT id, batch_id, transfer_proof
+         FROM batch_items
+         WHERE id IN (${uniqueIds.map(() => "?").join(",")})`,
+      )
+      .all(...uniqueIds) as Array<{
+      id: number;
+      batch_id: number;
+      transfer_proof: string | null;
+    }>;
+
+    if (oldProofs.length === 0) return 0;
+
+    let count = 0;
+    const tx = db.transaction(() => {
+      for (const row of oldProofs) {
+        const fee = row.id === leadItemId ? sanitizedGroupFee : 0;
+        const result = db
+          .prepare(
+            "UPDATE batch_items SET transfer_proof = ?, payment_method = 'transfer', transfer_status = ?, transfer_at = ?, transfer_fee = ?, updated_at = ? WHERE id = ?",
+          )
+          .run(
+            filename,
+            filename ? "done" : "pending",
+            filename ? transferAt : null,
+            fee,
+            now,
+            row.id,
+          );
+        count += result.changes;
+      }
+    });
+    tx();
+
+    for (const row of oldProofs) {
+      if (!row.transfer_proof || row.transfer_proof === filename) continue;
+      cleanupProofFileIfUnused(row.transfer_proof, [row.id]);
+    }
+
+    const batchIds = Array.from(new Set(oldProofs.map((row) => row.batch_id)));
+    for (const batchId of batchIds) {
+      syncBatchTransferExpense(batchId);
+    }
+
+    return count;
   },
 
   bulkUpdateTransfer: (

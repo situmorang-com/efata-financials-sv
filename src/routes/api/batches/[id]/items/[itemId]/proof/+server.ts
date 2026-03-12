@@ -1,6 +1,6 @@
 import { json } from '@sveltejs/kit';
 import sharp from 'sharp';
-import { batchDb, batchItemDb, saveProofFile, readProofFile, deleteProofFile } from '$lib/server/db.js';
+import { batchDb, batchItemDb, saveProofFile, readProofFile } from '$lib/server/db.js';
 import type { RequestHandler } from './$types.js';
 
 function filenamePart(value: string): string {
@@ -44,12 +44,6 @@ export const POST: RequestHandler = async ({ params, request }) => {
 
 		const itemId = Number(params.itemId);
 		const batchId = Number(params.id);
-
-		// Delete old proof file if exists
-		const oldProof = batchItemDb.getProof(itemId);
-		if (oldProof && !oldProof.startsWith('data:')) {
-			deleteProofFile(oldProof);
-		}
 
 		// Server-side: cap at 1200x1600 max, encode as AVIF q30
 		const compressed = await sharp(rawBuffer)
@@ -149,12 +143,7 @@ export const GET: RequestHandler = async ({ params, url }) => {
 // Delete transfer proof
 export const DELETE: RequestHandler = async ({ params }) => {
 	try {
-		const itemId = Number(params.itemId);
-		const oldProof = batchItemDb.getProof(itemId);
-		if (oldProof && !oldProof.startsWith('data:')) {
-			deleteProofFile(oldProof);
-		}
-		const success = batchItemDb.setProof(itemId, null);
+		const success = batchItemDb.setProof(Number(params.itemId), null);
 		if (!success) {
 			return json({ error: 'Batch item not found' }, { status: 404 });
 		}
