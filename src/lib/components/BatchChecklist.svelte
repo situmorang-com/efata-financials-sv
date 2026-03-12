@@ -132,10 +132,10 @@
 		if (!item.family_group_id || isCash(item)) return null;
 		const accountNumber = normalizeAccountNumber(item.actual_account_number || item.account_number);
 		const bank = normalizeKeyPart(item.actual_bank_name || item.bank_name);
-		const destination = item.transfer_to_id
-			? `to:${item.transfer_to_id}`
-			: accountNumber
-				? `acct:${bank}:${accountNumber}`
+		const destination = accountNumber
+			? `acct:${bank}:${accountNumber}`
+			: item.transfer_to_id
+				? `to:${item.transfer_to_id}`
 				: `self:${item.recipient_id}`;
 		return `family:${item.family_group_id}:${destination}`;
 	}
