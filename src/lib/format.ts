@@ -95,7 +95,7 @@ export function generateWhatsAppMessage(
 			for (const member of familyMemberDetails) {
 				lines.push(`- ${member.name}`);
 				if (Number.isFinite(Number(member.saturdays_attended))) {
-					lines.push(`  • ${Math.max(0, Math.round(Number(member.saturdays_attended) || 0))} sabat`);
+					lines.push(`↳ ${Math.max(0, Math.round(Number(member.saturdays_attended) || 0))} sabat`);
 				}
 				if (
 					(member.zoom_sessions && member.zoom_sessions > 0) ||
@@ -103,13 +103,14 @@ export function generateWhatsAppMessage(
 				) {
 					const sessions = Math.max(0, Math.round(Number(member.zoom_sessions) || 0));
 					if (sessions > 0) {
-						lines.push(`  • ${sessions} rabu malam (${member.zoom_label || 'zoom'})`);
+						lines.push(`↳ ${sessions} rabu malam (${member.zoom_label || 'zoom'})`);
 					} else if (member.zoom_label) {
-						lines.push(`  • ${member.zoom_label}`);
+						lines.push(`↳ ${member.zoom_label}`);
 					}
 				}
 			}
 		}
+		lines.push('');
 		lines.push('Mohon dicek ya.');
 		lines.push('Terima kasih. Tuhan memberkati.');
 
