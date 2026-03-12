@@ -1151,22 +1151,22 @@
 			<!-- Desktop Table (hidden on mobile) -->
 			<div class="glass-card rounded-2xl overflow-hidden fade-up hidden lg:block">
 				<div class="overflow-x-auto glass-scrollbar pr-2">
-					<table class="w-full">
+					<table class="w-full table-fixed">
 						<thead>
 							<tr class="border-b border-white/10 table-head-row">
 								<th class="text-left px-3 py-3 table-head-cell w-8">#</th>
-								<th class="text-left px-3 py-3 table-head-cell">Penerima</th>
-								<th class="text-left px-3 py-3 table-head-cell">Rek. Tujuan</th>
+								<th class="text-left px-3 py-3 table-head-cell w-[180px]">Penerima</th>
+								<th class="text-left px-3 py-3 table-head-cell w-[190px]">Rek. Tujuan</th>
 								{#if !isSpecial}
-									<th class="text-center px-3 py-3 table-head-cell">Sabat</th>
-									<th class="text-center px-3 py-3 table-head-cell">Zoom</th>
+									<th class="text-center px-2 py-3 table-head-cell w-[120px]">Sabat</th>
+									<th class="text-center px-2 py-3 table-head-cell w-[120px]">Zoom</th>
 								{/if}
-								<th class="text-right px-3 py-3 table-head-cell">Total</th>
-								<th class="text-center px-3 py-3 table-head-cell">Metode</th>
-								<th class="text-right px-2 py-3 table-head-cell">Biaya TF</th>
-								<th class="text-left px-2 py-3 table-head-cell">Tgl TF</th>
-								<th class="text-center px-3 py-3 table-head-cell w-12">TF</th>
-								<th class="text-center pl-1 pr-3 py-3 table-head-cell w-14">WA</th>
+								<th class="text-right px-2 py-3 table-head-cell w-[110px]">Total</th>
+								<th class="text-center px-2 py-3 table-head-cell w-[90px]">Metode</th>
+								<th class="text-right px-1.5 py-3 table-head-cell w-[86px]">Biaya TF</th>
+								<th class="text-left px-1.5 py-3 table-head-cell w-[110px]">Tgl TF</th>
+								<th class="text-center px-1 py-3 table-head-cell w-[56px]">TF</th>
+								<th class="text-center px-1 py-3 table-head-cell w-[52px]">WA</th>
 							</tr>
 						</thead>
 						<tbody>
@@ -1230,7 +1230,7 @@
 											</div>
 										</td>
 									{/if}
-									<td class="px-3 py-2.5 text-right">
+									<td class="px-2 py-2.5 text-right">
 										{#if isSpecial}
 											<input
 												type="text"
@@ -1246,14 +1246,14 @@
 												}}
 											/>
 										{:else}
-											<span class="text-white/80 text-sm font-mono font-medium">
+											<span class="text-white/80 text-sm font-mono font-medium whitespace-nowrap">
 												{formatRupiah(item.amount)}
 											</span>
 										{/if}
 									</td>
-									<td class="px-3 py-2.5 text-center">
+									<td class="px-2 py-2.5 text-center">
 										<select
-											class="glass-input rounded-lg px-2 py-1 text-xs text-white/90"
+											class="glass-input rounded-lg px-1.5 py-1 text-[11px] text-white/90 w-[82px]"
 											disabled={!isEditMode}
 											value={normalizePaymentMethod(item.payment_method)}
 											onchange={(e) =>
@@ -1266,7 +1266,7 @@
 											<option value="cash">Cash</option>
 										</select>
 									</td>
-									<td class="px-2 py-2.5 text-right">
+									<td class="px-1.5 py-2.5 text-right">
 										{#if isCash(item)}
 											<span class="text-white/30 text-xs">-</span>
 										{:else}
@@ -1274,7 +1274,7 @@
 												type="text"
 												inputmode="numeric"
 												disabled={!isEditMode}
-												class="glass-input rounded-lg px-2 py-1 text-xs text-white/90 w-[92px] text-right"
+												class="glass-input rounded-lg px-1.5 py-1 text-[11px] text-white/90 w-[80px] text-right"
 												value={formatCurrencyInput(item.transfer_fee || 0)}
 												onfocus={(e) => { (e.target as HTMLInputElement).value = String(item.transfer_fee || 0); }}
 												onblur={(e) => {
@@ -1285,12 +1285,12 @@
 											/>
 										{/if}
 									</td>
-									<td class="px-2 py-2.5">
+									<td class="px-1.5 py-2.5">
 										{#if item.transfer_status === 'done'}
 											<input
 												type="date"
 												disabled={!isEditMode}
-												class="glass-input rounded-lg px-2 py-1 text-xs text-white/80 w-[124px]"
+												class="glass-input rounded-lg px-1.5 py-1 text-[11px] text-white/80 w-[104px]"
 												value={formatDateInput(item.transfer_at)}
 												onchange={(e) => updateTransferDate(item, (e.target as HTMLInputElement).value)}
 											/>
@@ -1298,7 +1298,7 @@
 											<span class="text-white/30 text-xs">-</span>
 										{/if}
 									</td>
-									<td class="px-3 py-2.5">
+									<td class="px-1 py-2.5 text-center">
 										{#if isCash(item)}
 											<button
 												type="button"
@@ -1317,6 +1317,7 @@
 												itemId={item.id!}
 												{batchId}
 												disabled={!isEditMode}
+												compact={true}
 												transferStatus={item.transfer_status}
 												hasProof={!!item.has_transfer_proof}
 												recipientName={item.recipient_name || ''}
@@ -1324,11 +1325,12 @@
 											/>
 										{/if}
 									</td>
-									<td class="pl-1 pr-3 py-2.5 text-center">
+									<td class="px-1 py-2.5 text-center">
 										<WhatsAppButton
 											phone={item.whatsapp || ''}
 											name={item.recipient_name || ''}
 											amount={item.amount}
+											compact={true}
 											disabled={!isEditMode || item.transfer_status !== 'done'}
 											details={isSpecial ? undefined : {
 												saturdays_attended: item.saturdays_attended,
