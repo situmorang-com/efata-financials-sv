@@ -14,7 +14,8 @@
 		hasProof,
 		recipientName,
 		onStatusChange,
-		disabled = false
+		disabled = false,
+		compact = false
 	}: {
 		itemId: number;
 		batchId: number;
@@ -23,6 +24,7 @@
 		recipientName: string;
 		onStatusChange: (newStatus: 'pending' | 'done', hasProof: boolean) => void;
 		disabled?: boolean;
+		compact?: boolean;
 	} = $props();
 
 	let mode = $state<'idle' | 'picking' | 'uploading' | 'viewing'>('idle');
@@ -181,12 +183,13 @@
 			type="button"
 			disabled={disabled}
 			onclick={openPicker}
-			class="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition-all
+			class="flex items-center rounded-lg text-xs font-medium transition-all
+				{compact ? 'gap-0 px-2 py-1.5' : 'gap-1.5 px-3 py-1.5'}
 				bg-white/5 text-white/50 border border-white/15 hover:border-white/30
 				{disabled ? 'opacity-50 cursor-not-allowed hover:border-white/15' : ''}"
 		>
 			<Upload class="w-3.5 h-3.5" />
-			Transfer
+			{#if !compact}Transfer{/if}
 		</button>
 
 	{:else if mode === 'picking'}

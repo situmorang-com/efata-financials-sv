@@ -22,10 +22,6 @@
 		}
 	}
 
-	function fillAll() {
-		if (disabled) return;
-		onchange(attended === total ? 0 : total);
-	}
 </script>
 
 <div class="flex items-center gap-1.5">
@@ -51,13 +47,4 @@
 			</button>
 		{/each}
 	</div>
-	<button
-		type="button"
-		disabled={disabled}
-		onclick={fillAll}
-		class="text-white/40 text-xs font-medium tabular-nums transition-colors min-w-[2rem] text-center {disabled ? 'opacity-50 cursor-not-allowed' : 'hover:text-white/70'}"
-		title={attended === total ? 'Kosongkan semua' : 'Isi semua'}
-	>
-		{attended}/{total}
-	</button>
 </div>
