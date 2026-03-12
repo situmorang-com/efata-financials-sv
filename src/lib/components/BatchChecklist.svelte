@@ -39,6 +39,27 @@
 	let downloading = $state(false);
 	let isEditMode = $state(false);
 	let isSpecial = $derived(batch?.type === 'special');
+	let viewMode = $state<'individual' | 'family'>('family');
+	let selectedFamilyGroupKey = $state<string | null>(null);
+	let familyTransferDate = $state(new Date().toISOString().slice(0, 10));
+	let familyTransferFeeInput = $state('0');
+	let familyTransferFile = $state<File | null>(null);
+	let familyTransferSubmitting = $state(false);
+
+	type FamilyTransferGroup = {
+		key: string;
+		payeeName: string;
+		accountLabel: string;
+		leadItemId: number;
+		members: BatchItem[];
+		totalAmount: number;
+		totalFee: number;
+		totalSend: number;
+		doneCount: number;
+		proofCount: number;
+		pendingNotifyCount: number;
+		latestTransferAt: string | null;
+	};
 
 	function normalizePaymentMethod(value?: string | null): 'transfer' | 'cash' {
 		return String(value || '').trim().toLowerCase() === 'cash' ? 'cash' : 'transfer';
@@ -87,14 +108,117 @@
 			? (items.reduce((sum, i) => sum + i.saturdays_attended, 0) / items.length).toFixed(1)
 			: '0'
 	);
+
+	function matchesSearch(item: BatchItem, query: string): boolean {
+		if (!query.trim()) return true;
+		const q = query.toLowerCase();
+		return (
+			(item.recipient_name || '').toLowerCase().includes(q) ||
+			(item.transfer_to_name || '').toLowerCase().includes(q) ||
+			(item.actual_bank_name || item.bank_name || '').toLowerCase().includes(q) ||
+			(item.actual_account_number || item.account_number || '').toLowerCase().includes(q)
+		);
+	}
+
+	function normalizeAccountNumber(value?: string | null): string {
+		return String(value || '').replace(/\D/g, '');
+	}
+
+	function normalizeKeyPart(value?: string | null): string {
+		return String(value || '').trim().toLowerCase();
+	}
+
+	function getFamilyTransferKey(item: BatchItem): string | null {
+		if (!item.family_group_id || isCash(item)) return null;
+		const accountNumber = normalizeAccountNumber(item.actual_account_number || item.account_number);
+		const bank = normalizeKeyPart(item.actual_bank_name || item.bank_name);
+		const destination = item.transfer_to_id
+			? `to:${item.transfer_to_id}`
+			: accountNumber
+				? `acct:${bank}:${accountNumber}`
+				: `self:${item.recipient_id}`;
+		return `family:${item.family_group_id}:${destination}`;
+	}
+
+	function buildFamilyTransferGroups(source: BatchItem[]): FamilyTransferGroup[] {
+		const grouped = new Map<string, BatchItem[]>();
+		for (const item of source) {
+			const key = getFamilyTransferKey(item);
+			if (!key) continue;
+			if (!grouped.has(key)) grouped.set(key, []);
+			grouped.get(key)!.push(item);
+		}
+
+		const groups: FamilyTransferGroup[] = [];
+		for (const [key, members] of grouped.entries()) {
+			if (members.length < 2) continue;
+			const sortedMembers = [...members].sort((a, b) =>
+				(a.recipient_name || '').localeCompare(b.recipient_name || '')
+			);
+			const leadMember =
+				sortedMembers.find((member) => member.transfer_to_id) || sortedMembers[0];
+			const payeeName =
+				leadMember.transfer_to_name || leadMember.actual_account_holder || leadMember.recipient_name || '-';
+			const bankLabel = leadMember.actual_bank_name || leadMember.bank_name || '-';
+			const accountLabel = leadMember.actual_account_number || leadMember.account_number || '-';
+			const totalAmount = sortedMembers.reduce((sum, member) => sum + (member.amount || 0), 0);
+			const totalFee = sortedMembers.reduce((sum, member) => sum + (member.transfer_fee || 0), 0);
+			const doneCount = sortedMembers.filter((member) => member.transfer_status === 'done').length;
+			const proofCount = sortedMembers.filter((member) => !!member.has_transfer_proof).length;
+			const pendingNotifyCount = sortedMembers.filter(
+				(member) => member.transfer_status === 'done' && member.notify_status === 'pending'
+			).length;
+			const latestTransferAt = sortedMembers
+				.map((member) => member.transfer_at || '')
+				.filter(Boolean)
+				.sort()
+				.at(-1) || null;
+			groups.push({
+				key,
+				payeeName,
+				accountLabel: `${bankLabel} ${accountLabel}`,
+				leadItemId: leadMember.id!,
+				members: sortedMembers,
+				totalAmount,
+				totalFee,
+				totalSend: totalAmount + totalFee,
+				doneCount,
+				proofCount,
+				pendingNotifyCount,
+				latestTransferAt
+			});
+		}
+
+		return groups.sort((a, b) => a.payeeName.localeCompare(b.payeeName));
+	}
+
 	let visibleItems = $derived(
 		items.filter(i => {
 			if (filterMode === 'pending-transfer' && i.transfer_status !== 'pending') return false;
 			if (filterMode === 'pending-notify' && !(i.transfer_status === 'done' && i.notify_status === 'pending')) return false;
+			return matchesSearch(i, searchQuery);
+		})
+	);
+	let familyTransferGroups = $derived(buildFamilyTransferGroups(items));
+	let visibleFamilyTransferGroups = $derived(
+		familyTransferGroups.filter(group => {
+			if (filterMode === 'pending-transfer' && group.doneCount === group.members.length) return false;
+			if (filterMode === 'pending-notify' && group.pendingNotifyCount === 0) return false;
 			if (!searchQuery.trim()) return true;
 			const q = searchQuery.toLowerCase();
-			return (i.recipient_name || '').toLowerCase().includes(q) || (i.bank_name || '').toLowerCase().includes(q);
+			return (
+				group.payeeName.toLowerCase().includes(q) ||
+				group.accountLabel.toLowerCase().includes(q) ||
+				group.members.some((member) =>
+					(member.recipient_name || '').toLowerCase().includes(q)
+				)
+			);
 		})
+	);
+	let selectedFamilyGroup = $derived(
+		selectedFamilyGroupKey
+			? familyTransferGroups.find(group => group.key === selectedFamilyGroupKey) || null
+			: null
 	);
 
 	async function updatePaymentMethod(item: BatchItem, method: 'transfer' | 'cash') {
@@ -561,6 +685,70 @@
 		return digits ? Number(digits) : 0;
 	}
 
+	function openFamilyTransfer(group: FamilyTransferGroup) {
+		selectedFamilyGroupKey = group.key;
+		familyTransferDate = formatDateInput(group.latestTransferAt) || new Date().toISOString().slice(0, 10);
+		familyTransferFeeInput = String(group.totalFee || 0);
+		familyTransferFile = null;
+	}
+
+	function closeFamilyTransfer() {
+		selectedFamilyGroupKey = null;
+		familyTransferSubmitting = false;
+		familyTransferFile = null;
+	}
+
+	async function submitFamilyTransfer() {
+		if (!ensureEditMode()) return;
+		if (!selectedFamilyGroup) return;
+		if (!familyTransferFile) {
+			addToast('Upload bukti transfer keluarga dulu', 'info');
+			return;
+		}
+
+		familyTransferSubmitting = true;
+		try {
+			const formData = new FormData();
+			formData.set(
+				'item_ids',
+				JSON.stringify(selectedFamilyGroup.members.map((member) => member.id).filter(Boolean))
+			);
+			formData.set('lead_item_id', String(selectedFamilyGroup.leadItemId));
+			formData.set('transfer_fee', String(parseCurrencyInput(familyTransferFeeInput)));
+			formData.set('transfer_at', familyTransferDate || new Date().toISOString().slice(0, 10));
+			formData.set('proof', familyTransferFile);
+
+			const res = await fetch(`/api/batches/${batchId}/family-transfer`, {
+				method: 'POST',
+				body: formData
+			});
+			if (!res.ok) {
+				let msg = 'Gagal menyimpan transfer keluarga';
+				try {
+					const payload = await res.json();
+					msg = payload?.error || msg;
+				} catch {
+					// no-op
+				}
+				throw new Error(msg);
+			}
+
+			addToast(
+				`Transfer keluarga ${selectedFamilyGroup.payeeName} tersimpan (${selectedFamilyGroup.members.length} anggota)`,
+				'success'
+			);
+			closeFamilyTransfer();
+			await loadData();
+			await autoSkipMissingWhatsapp();
+			await maybeCompleteBatch();
+		} catch (e) {
+			console.error('Failed to submit family transfer:', e);
+			addToast(e instanceof Error ? e.message : 'Gagal menyimpan transfer keluarga', 'error');
+		} finally {
+			familyTransferSubmitting = false;
+		}
+	}
+
 	function getProofUrl(item: BatchItem): string | undefined {
 		if (!item.has_transfer_proof) return undefined;
 		// Use current origin so the link works when shared
@@ -748,25 +936,41 @@
 			</div>
 
 			<div class="flex flex-col lg:flex-row lg:items-center gap-3 mb-2 fade-up">
-				<div class="flex items-center gap-1 glass-dark rounded-full px-2 py-1">
-					<button
-						onclick={() => { filterMode = 'all'; }}
-						class="nav-pill {filterMode === 'all' ? 'nav-pill-active' : ''}"
-					>
-						Semua
-					</button>
-					<button
-						onclick={() => { filterMode = 'pending-transfer'; }}
-						class="nav-pill {filterMode === 'pending-transfer' ? 'nav-pill-active' : ''}"
-					>
-						Belum Transfer ({pendingTransferCount})
-					</button>
-					<button
-						onclick={() => { filterMode = 'pending-notify'; }}
-						class="nav-pill {filterMode === 'pending-notify' ? 'nav-pill-active' : ''}"
-					>
-						Belum Notif ({pendingNotifyCount})
-					</button>
+				<div class="flex flex-wrap items-center gap-2">
+					<div class="flex items-center gap-1 glass-dark rounded-full px-2 py-1">
+						<button
+							onclick={() => { filterMode = 'all'; }}
+							class="nav-pill {filterMode === 'all' ? 'nav-pill-active' : ''}"
+						>
+							Semua
+						</button>
+						<button
+							onclick={() => { filterMode = 'pending-transfer'; }}
+							class="nav-pill {filterMode === 'pending-transfer' ? 'nav-pill-active' : ''}"
+						>
+							Belum Transfer ({pendingTransferCount})
+						</button>
+						<button
+							onclick={() => { filterMode = 'pending-notify'; }}
+							class="nav-pill {filterMode === 'pending-notify' ? 'nav-pill-active' : ''}"
+						>
+							Belum Notif ({pendingNotifyCount})
+						</button>
+					</div>
+					<div class="flex items-center gap-1 glass-dark rounded-full px-2 py-1">
+						<button
+							onclick={() => { viewMode = 'family'; }}
+							class="nav-pill {viewMode === 'family' ? 'nav-pill-active' : ''}"
+						>
+							Per Keluarga
+						</button>
+						<button
+							onclick={() => { viewMode = 'individual'; }}
+							class="nav-pill {viewMode === 'individual' ? 'nav-pill-active' : ''}"
+						>
+							Per Orang
+						</button>
+					</div>
 				</div>
 				<div class="relative w-full lg:w-72">
 					<Search class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-white/30" />
@@ -781,7 +985,58 @@
 		</div>
 
 		<!-- Checklist -->
-		{#if visibleItems.length === 0}
+		{#if viewMode === 'family'}
+			{#if visibleFamilyTransferGroups.length === 0}
+				<EmptyState
+					icon={UsersIcon}
+					title="Belum ada grup transfer keluarga"
+					description="Gunakan mode Per Orang untuk transfer individual atau cek data family tag di halaman penerima."
+				/>
+			{:else}
+				<div class="grid gap-3 sm:grid-cols-2 fade-up">
+					{#each visibleFamilyTransferGroups as group, i}
+						<div class="glass-card rounded-2xl p-4 border border-amber-400/20">
+							<div class="flex items-start justify-between gap-3">
+								<div class="min-w-0">
+									<p class="text-white font-semibold text-sm">{i + 1}. {group.payeeName}</p>
+									<p class="text-white/50 text-xs mt-0.5">{group.accountLabel}</p>
+									<p class="text-amber-200/80 text-xs mt-1">
+										{group.members.length} anggota: {group.members.map((member) => member.recipient_name).join(', ')}
+									</p>
+								</div>
+								<button
+									onclick={() => openFamilyTransfer(group)}
+									disabled={!isEditMode}
+									class="glass-button shrink-0 rounded-lg px-3 py-1.5 text-xs border border-emerald-500/30
+										{!isEditMode ? 'opacity-50 cursor-not-allowed bg-emerald-500/10' : 'bg-emerald-500/20 hover:bg-emerald-500/35 text-emerald-200'}"
+								>
+									Transfer Keluarga
+								</button>
+							</div>
+
+							<div class="grid grid-cols-2 gap-2 mt-3 text-xs">
+								<div class="rounded-lg bg-white/5 px-2.5 py-2">
+									<p class="text-white/45">Total Hak</p>
+									<p class="text-white font-semibold">{formatRupiah(group.totalAmount)}</p>
+								</div>
+								<div class="rounded-lg bg-white/5 px-2.5 py-2">
+									<p class="text-white/45">Biaya TF (1x)</p>
+									<p class="text-violet-200 font-semibold">{formatRupiah(group.totalFee)}</p>
+								</div>
+								<div class="rounded-lg bg-white/5 px-2.5 py-2">
+									<p class="text-white/45">Total Kirim</p>
+									<p class="text-emerald-200 font-semibold">{formatRupiah(group.totalSend)}</p>
+								</div>
+								<div class="rounded-lg bg-white/5 px-2.5 py-2">
+									<p class="text-white/45">Status</p>
+									<p class="text-white/80">{group.doneCount}/{group.members.length} transfer • {group.proofCount}/{group.members.length} bukti</p>
+								</div>
+							</div>
+						</div>
+					{/each}
+				</div>
+			{/if}
+		{:else if visibleItems.length === 0}
 			<EmptyState
 				icon={SearchX}
 				title="Tidak ada data untuk filter ini"
@@ -1174,6 +1429,107 @@
 						</div>
 					</div>
 				{/each}
+			</div>
+		{/if}
+
+		{#if selectedFamilyGroup}
+			<div class="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
+				<div class="glass-card w-full max-w-lg rounded-2xl p-4 border border-white/15">
+					<div class="flex items-start justify-between gap-3 mb-3">
+						<div>
+							<p class="text-white text-base font-semibold">Transfer Keluarga</p>
+							<p class="text-white/55 text-xs mt-0.5">
+								Via {selectedFamilyGroup.payeeName} • {selectedFamilyGroup.members.length} anggota
+							</p>
+						</div>
+						<button
+							type="button"
+							class="text-white/40 hover:text-white/70 text-xs"
+							onclick={closeFamilyTransfer}
+							disabled={familyTransferSubmitting}
+						>
+							Tutup
+						</button>
+					</div>
+
+					<div class="grid grid-cols-1 sm:grid-cols-3 gap-2 mb-3 text-xs">
+						<div class="rounded-lg bg-white/5 px-2.5 py-2">
+							<p class="text-white/45">Total Hak</p>
+							<p class="text-white font-semibold">{formatRupiah(selectedFamilyGroup.totalAmount)}</p>
+						</div>
+						<div class="rounded-lg bg-white/5 px-2.5 py-2">
+							<p class="text-white/45">Biaya TF</p>
+							<p class="text-violet-200 font-semibold">{formatRupiah(parseCurrencyInput(familyTransferFeeInput))}</p>
+						</div>
+						<div class="rounded-lg bg-white/5 px-2.5 py-2">
+							<p class="text-white/45">Total Kirim</p>
+							<p class="text-emerald-200 font-semibold">
+								{formatRupiah(selectedFamilyGroup.totalAmount + parseCurrencyInput(familyTransferFeeInput))}
+							</p>
+						</div>
+					</div>
+
+					<div class="space-y-2.5 mb-3">
+						<div>
+							<label for="family-transfer-date" class="block text-white/70 text-xs uppercase tracking-wider mb-1.5">Tanggal Transfer</label>
+							<input
+								id="family-transfer-date"
+								type="date"
+								class="glass-input rounded-lg px-3 py-2 text-sm text-white w-full"
+								bind:value={familyTransferDate}
+								disabled={familyTransferSubmitting}
+							/>
+						</div>
+						<div>
+							<label for="family-transfer-fee" class="block text-white/70 text-xs uppercase tracking-wider mb-1.5">Biaya Transfer (1x)</label>
+							<input
+								id="family-transfer-fee"
+								type="text"
+								inputmode="numeric"
+								class="glass-input rounded-lg px-3 py-2 text-sm text-white w-full"
+								value={formatCurrencyInput(parseCurrencyInput(familyTransferFeeInput))}
+								disabled={familyTransferSubmitting}
+								onfocus={(e) => { (e.target as HTMLInputElement).value = String(parseCurrencyInput(familyTransferFeeInput)); }}
+								onblur={(e) => { familyTransferFeeInput = String(parseCurrencyInput((e.target as HTMLInputElement).value)); }}
+							/>
+						</div>
+						<div>
+							<label for="family-transfer-proof" class="block text-white/70 text-xs uppercase tracking-wider mb-1.5">Bukti Transfer (1 file untuk semua anggota)</label>
+							<input
+								id="family-transfer-proof"
+								type="file"
+								accept="image/*"
+								class="glass-input rounded-lg px-3 py-2 text-sm text-white w-full"
+								disabled={familyTransferSubmitting}
+								onchange={(e) => {
+									familyTransferFile = (e.target as HTMLInputElement).files?.[0] || null;
+								}}
+							/>
+							{#if familyTransferFile}
+								<p class="text-white/45 text-xs mt-1">File: {familyTransferFile.name}</p>
+							{/if}
+						</div>
+					</div>
+
+					<div class="flex justify-end gap-2">
+						<button
+							type="button"
+							class="glass-button rounded-lg px-3 py-2 text-xs border border-white/20 text-white/70"
+							onclick={closeFamilyTransfer}
+							disabled={familyTransferSubmitting}
+						>
+							Batal
+						</button>
+						<button
+							type="button"
+							class="glass-button rounded-lg px-3 py-2 text-xs border border-emerald-500/30 bg-emerald-500/20 text-emerald-200 disabled:opacity-50 disabled:cursor-not-allowed"
+							onclick={submitFamilyTransfer}
+							disabled={familyTransferSubmitting}
+						>
+							{familyTransferSubmitting ? 'Menyimpan...' : 'Terapkan ke Semua Anggota'}
+						</button>
+					</div>
+				</div>
 			</div>
 		{/if}
 	{:else}
