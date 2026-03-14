@@ -19,6 +19,7 @@ export function generateWhatsAppMessage(
 	amount: number,
 	details?: {
 		saturdays_attended: number;
+		wednesdays_attended?: number;
 		transport_rate: number;
 		zoom_type: 'none' | 'single' | 'family' | 'custom';
 		zoom_amount: number;
@@ -152,7 +153,10 @@ export function generateWhatsAppMessage(
 					: details.zoom_type === 'family'
 						? 'zoom'
 						: 'zoom';
-			const zoomSessions = Math.max(0, details.saturdays_attended || 0);
+			const zoomSessions = Math.max(
+				0,
+				Number(details.wednesdays_attended ?? details.saturdays_attended) || 0
+			);
 			if (zoomSessions > 0) {
 				lines.push(`↳ ${zoomSessions} rabu malam (${zoomLabel})`);
 			}
@@ -186,6 +190,7 @@ export function generateWhatsAppUrl(
 	amount: number,
 	details?: {
 		saturdays_attended: number;
+		wednesdays_attended?: number;
 		transport_rate: number;
 		zoom_type: 'none' | 'single' | 'family' | 'custom';
 		zoom_amount: number;

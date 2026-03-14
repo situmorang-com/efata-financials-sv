@@ -273,7 +273,7 @@
 				saturdays_attended: member.saturdays_attended,
 				zoom_sessions:
 					member.zoom_type && member.zoom_type !== 'none'
-						? Math.max(0, Number(batch?.total_saturdays || 0))
+						? Math.max(0, Math.round(Number(member.wednesdays_attended || 0)))
 						: 0,
 				zoom_label:
 					member.zoom_type && member.zoom_type !== 'none'
@@ -362,6 +362,7 @@
 			items = Array.isArray(itemsPayload)
 				? (itemsPayload as BatchItem[]).map((item) => ({
 					...item,
+					wednesdays_attended: Math.max(0, Math.round(item.wednesdays_attended || 0)),
 					custom_zoom_amount: Math.max(0, Math.round(item.custom_zoom_amount || 0)),
 					payment_method: normalizePaymentMethod(item.payment_method)
 				}))
@@ -921,6 +922,13 @@
 							Edit
 						{/if}
 					</button>
+					<a
+						href={`/batches/${batchId}/attendance`}
+						class="glass-button rounded-full px-3 py-2 text-white text-sm border border-sky-500/30 bg-sky-500/15 hover:bg-sky-500/30 flex items-center gap-1.5"
+					>
+						<CalendarDays class="w-4 h-4" />
+						Attendance
+					</a>
 					{#if items.length === 0}
 						<button
 							onclick={populateBatch}
@@ -1334,6 +1342,7 @@
 											disabled={!isEditMode || item.transfer_status !== 'done'}
 											details={isSpecial ? undefined : {
 												saturdays_attended: item.saturdays_attended,
+												wednesdays_attended: item.wednesdays_attended,
 												transport_rate: batch.transport_rate,
 												zoom_type: item.zoom_type,
 												zoom_amount: getZoomAmount(item)
@@ -1525,6 +1534,7 @@
 									disabled={!isEditMode || item.transfer_status !== 'done'}
 									details={isSpecial ? undefined : {
 										saturdays_attended: item.saturdays_attended,
+										wednesdays_attended: item.wednesdays_attended,
 										transport_rate: batch.transport_rate,
 										zoom_type: item.zoom_type,
 										zoom_amount: getZoomAmount(item)

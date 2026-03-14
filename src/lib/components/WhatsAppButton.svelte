@@ -9,6 +9,7 @@
 		disabled?: boolean;
 		details?: {
 			saturdays_attended: number;
+			wednesdays_attended?: number;
 			transport_rate: number;
 			zoom_type: 'none' | 'single' | 'family' | 'custom';
 			zoom_amount: number;

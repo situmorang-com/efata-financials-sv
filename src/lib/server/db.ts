@@ -12,6 +12,8 @@ import type {
   Recipient,
   Batch,
   BatchItem,
+  AttendanceRecord,
+  AttendanceType,
   ZoomType,
   FinanceCategory,
   FinanceParty,
@@ -111,6 +113,7 @@ db.exec(`
     amount INTEGER NOT NULL DEFAULT 0,
     payment_method TEXT NOT NULL DEFAULT 'transfer',
     saturdays_attended INTEGER NOT NULL DEFAULT 0,
+    wednesdays_attended INTEGER NOT NULL DEFAULT 0,
     zoom_type TEXT NOT NULL DEFAULT 'none',
     custom_zoom_amount INTEGER NOT NULL DEFAULT 0,
     transfer_status TEXT NOT NULL DEFAULT 'pending',
@@ -123,6 +126,22 @@ db.exec(`
     FOREIGN KEY (batch_id) REFERENCES batches(id) ON DELETE CASCADE,
     FOREIGN KEY (recipient_id) REFERENCES recipients(id),
     UNIQUE(batch_id, recipient_id)
+  )
+`);
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS attendance_records (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    batch_id INTEGER NOT NULL,
+    recipient_id INTEGER NOT NULL,
+    attendance_type TEXT NOT NULL CHECK (attendance_type IN ('saturday', 'wednesday')),
+    attendance_date TEXT NOT NULL,
+    attended INTEGER NOT NULL DEFAULT 1 CHECK (attended IN (0, 1)),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY (batch_id) REFERENCES batches(id) ON DELETE CASCADE,
+    FOREIGN KEY (recipient_id) REFERENCES recipients(id),
+    UNIQUE(batch_id, recipient_id, attendance_type, attendance_date)
   )
 `);
 
@@ -307,6 +326,9 @@ db.exec(
 );
 db.exec(
   `CREATE INDEX IF NOT EXISTS idx_bank_lines_matched_txn ON bank_statement_lines(matched_txn_id)`,
+);
+db.exec(
+  `CREATE INDEX IF NOT EXISTS idx_attendance_batch_type_date ON attendance_records(batch_id, attendance_type, attendance_date)`,
 );
 
 // --- Migration: add new columns to existing tables if they don't exist ---
@@ -521,6 +543,11 @@ if (!columnExists("batch_items", "saturdays_attended")) {
     "ALTER TABLE batch_items ADD COLUMN saturdays_attended INTEGER NOT NULL DEFAULT 0",
   );
 }
+if (!columnExists("batch_items", "wednesdays_attended")) {
+  db.exec(
+    "ALTER TABLE batch_items ADD COLUMN wednesdays_attended INTEGER NOT NULL DEFAULT 0",
+  );
+}
 if (!columnExists("batch_items", "zoom_type")) {
   db.exec(
     "ALTER TABLE batch_items ADD COLUMN zoom_type TEXT NOT NULL DEFAULT 'none'",
@@ -627,13 +654,13 @@ const selectBatchById = db.prepare(`
 
 // --- Prepared statements - Batch Items ---
 const insertBatchItem = db.prepare(`
-  INSERT INTO batch_items (batch_id, recipient_id, amount, payment_method, saturdays_attended, zoom_type, custom_zoom_amount, transfer_fee, transfer_status, notify_status, created_at, updated_at)
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'pending', ?, ?)
+  INSERT INTO batch_items (batch_id, recipient_id, amount, payment_method, saturdays_attended, wednesdays_attended, zoom_type, custom_zoom_amount, transfer_fee, transfer_status, notify_status, created_at, updated_at)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'pending', ?, ?)
 `);
 
 const updateBatchItem = db.prepare(`
   UPDATE batch_items
-  SET amount = ?, payment_method = ?, saturdays_attended = ?, zoom_type = ?, custom_zoom_amount = ?, transfer_fee = ?, transfer_status = ?, notify_status = ?, transfer_at = ?, notified_at = ?, notes = ?, transfer_proof = ?, updated_at = ?
+  SET amount = ?, payment_method = ?, saturdays_attended = ?, wednesdays_attended = ?, zoom_type = ?, custom_zoom_amount = ?, transfer_fee = ?, transfer_status = ?, notify_status = ?, transfer_at = ?, notified_at = ?, notes = ?, transfer_proof = ?, updated_at = ?
   WHERE id = ?
 `);
 
@@ -641,7 +668,7 @@ const deleteBatchItem = db.prepare("DELETE FROM batch_items WHERE id = ?");
 
 const selectBatchItems = db.prepare(`
   SELECT
-    bi.id, bi.batch_id, bi.recipient_id, bi.amount, bi.payment_method, bi.saturdays_attended,
+    bi.id, bi.batch_id, bi.recipient_id, bi.amount, bi.payment_method, bi.saturdays_attended, bi.wednesdays_attended,
     bi.zoom_type, bi.custom_zoom_amount, bi.transfer_fee, bi.transfer_status, bi.notify_status, bi.transfer_at,
     bi.notified_at, bi.notes, bi.created_at, bi.updated_at,
     (bi.transfer_proof IS NOT NULL AND bi.transfer_proof != '') AS has_transfer_proof,
@@ -669,6 +696,53 @@ const selectBatchItemById = db.prepare(`
 
 const checkBatchItemExists = db.prepare(`
   SELECT id FROM batch_items WHERE batch_id = ? AND recipient_id = ?
+`);
+
+const selectAttendanceRecordsByBatch = db.prepare(`
+  SELECT
+    id,
+    batch_id,
+    recipient_id,
+    attendance_type,
+    attendance_date,
+    attended,
+    created_at,
+    updated_at
+  FROM attendance_records
+  WHERE batch_id = ?
+  ORDER BY attendance_date, attendance_type, recipient_id
+`);
+
+const upsertAttendanceRecord = db.prepare(`
+  INSERT INTO attendance_records (batch_id, recipient_id, attendance_type, attendance_date, attended, created_at, updated_at)
+  VALUES (?, ?, ?, ?, ?, ?, ?)
+  ON CONFLICT(batch_id, recipient_id, attendance_type, attendance_date)
+  DO UPDATE SET
+    attended = excluded.attended,
+    updated_at = excluded.updated_at
+`);
+
+const selectAttendanceCountsByBatch = db.prepare(`
+  SELECT
+    bi.id AS batch_item_id,
+    bi.recipient_id,
+    bi.zoom_type,
+    bi.custom_zoom_amount,
+    COALESCE(SUM(CASE WHEN ar.attendance_type = 'saturday' AND ar.attended = 1 THEN 1 ELSE 0 END), 0) AS saturday_count,
+    COALESCE(SUM(CASE WHEN ar.attendance_type = 'wednesday' AND ar.attended = 1 THEN 1 ELSE 0 END), 0) AS wednesday_count
+  FROM batch_items bi
+  LEFT JOIN attendance_records ar
+    ON ar.batch_id = bi.batch_id
+   AND ar.recipient_id = bi.recipient_id
+  WHERE bi.batch_id = ?
+  GROUP BY bi.id, bi.recipient_id
+`);
+
+const selectBatchItemAttendanceByRecipient = db.prepare(`
+  SELECT recipient_id, saturdays_attended, wednesdays_attended, amount
+  FROM batch_items
+  WHERE batch_id = ? AND recipient_id = ?
+  LIMIT 1
 `);
 
 // --- Database access objects ---
@@ -1076,6 +1150,60 @@ function syncBatchTransferExpense(batchId: number): void {
   );
 }
 
+function capAttendance(value: number): number {
+  return Math.min(4, Math.max(0, Math.round(Number(value) || 0)));
+}
+
+function syncBatchAttendanceToBatchItems(batchId: number, batch?: Batch): number {
+  const targetBatch =
+    batch ??
+    (selectBatchById.get(batchId) as Batch | undefined);
+  if (!targetBatch || targetBatch.type === "special") return 0;
+
+  const rows = selectAttendanceCountsByBatch.all(batchId) as Array<{
+    batch_item_id: number;
+    recipient_id: number;
+    zoom_type: ZoomType;
+    custom_zoom_amount: number;
+    saturday_count: number;
+    wednesday_count: number;
+  }>;
+
+  const now = new Date().toISOString();
+  let count = 0;
+  const tx = db.transaction(() => {
+    for (const row of rows) {
+      const saturdaysAttended = capAttendance(row.saturday_count);
+      const wednesdaysAttended = capAttendance(row.wednesday_count);
+      const amount = calculateAmount(
+        saturdaysAttended,
+        targetBatch.transport_rate,
+        row.zoom_type,
+        targetBatch.zoom_single_rate,
+        targetBatch.zoom_family_rate,
+        row.custom_zoom_amount,
+      );
+      const result = db
+        .prepare(
+          `UPDATE batch_items
+           SET saturdays_attended = ?, wednesdays_attended = ?, amount = ?, updated_at = ?
+           WHERE id = ?`,
+        )
+        .run(
+          saturdaysAttended,
+          wednesdaysAttended,
+          amount,
+          now,
+          row.batch_item_id,
+        );
+      count += result.changes;
+    }
+  });
+  tx();
+  syncBatchTransferExpense(batchId);
+  return count;
+}
+
 function voidBatchTransferExpense(batchId: number): void {
   const now = new Date().toISOString();
   const ref = `BATCH-${batchId}`;
@@ -1126,6 +1254,10 @@ export const batchItemDb = {
   getByBatchId: (batchId: number): BatchItem[] => {
     return (selectBatchItems.all(batchId) as BatchItem[]).map((item) => ({
       ...item,
+      wednesdays_attended: Math.max(
+        0,
+        Math.round(Number(item.wednesdays_attended) || 0),
+      ),
       payment_method: normalizeBatchPaymentMethod(item.payment_method),
     }));
   },
@@ -1135,6 +1267,10 @@ export const batchItemDb = {
     if (!item) return undefined;
     return {
       ...item,
+      wednesdays_attended: Math.max(
+        0,
+        Math.round(Number(item.wednesdays_attended) || 0),
+      ),
       payment_method: normalizeBatchPaymentMethod(item.payment_method),
     };
   },
@@ -1144,6 +1280,7 @@ export const batchItemDb = {
     recipientId: number,
     amount: number,
     saturdaysAttended: number = 0,
+    wednesdaysAttended: number = 0,
     zoomType: ZoomType = "none",
     customZoomAmount: number = 0,
     transferFee: number = 0,
@@ -1157,6 +1294,7 @@ export const batchItemDb = {
       amount,
       "transfer",
       saturdaysAttended,
+      wednesdaysAttended,
       zoomType,
       Math.max(0, Math.round(customZoomAmount || 0)),
       transferFee,
@@ -1170,6 +1308,7 @@ export const batchItemDb = {
       amount,
       payment_method: "transfer",
       saturdays_attended: saturdaysAttended,
+      wednesdays_attended: wednesdaysAttended,
       zoom_type: zoomType,
       custom_zoom_amount: Math.max(0, Math.round(customZoomAmount || 0)),
       transfer_fee: transferFee,
@@ -1203,6 +1342,7 @@ export const batchItemDb = {
       updated.amount,
       normalizedPaymentMethod,
       updated.saturdays_attended,
+      updated.wednesdays_attended,
       updated.zoom_type,
       Math.max(0, Math.round(updated.custom_zoom_amount || 0)),
       updated.transfer_fee ?? 0,
@@ -1253,6 +1393,7 @@ export const batchItemDb = {
               batch.default_amount,
               "transfer",
               0,
+              0,
               "none",
               0,
               0,
@@ -1281,6 +1422,7 @@ export const batchItemDb = {
             r.id!,
             amount,
             "transfer",
+            0,
             0,
             zoomType,
             0,
@@ -1495,6 +1637,48 @@ export const batchItemDb = {
     updateTransaction();
     syncBatchTransferExpense(batchId);
     return count;
+  },
+};
+
+export const attendanceDb = {
+  getByBatchId: (batchId: number): AttendanceRecord[] => {
+    return selectAttendanceRecordsByBatch.all(batchId) as AttendanceRecord[];
+  },
+
+  upsert: (
+    batchId: number,
+    recipientId: number,
+    attendanceType: AttendanceType,
+    attendanceDate: string,
+    attended: number,
+    batch?: Batch,
+  ): {
+    recipient_id: number;
+    saturdays_attended: number;
+    wednesdays_attended: number;
+    amount: number;
+  } | null => {
+    const now = new Date().toISOString();
+    upsertAttendanceRecord.run(
+      batchId,
+      recipientId,
+      attendanceType,
+      attendanceDate,
+      attended ? 1 : 0,
+      now,
+      now,
+    );
+    syncBatchAttendanceToBatchItems(batchId, batch);
+    return (selectBatchItemAttendanceByRecipient.get(batchId, recipientId) as {
+      recipient_id: number;
+      saturdays_attended: number;
+      wednesdays_attended: number;
+      amount: number;
+    }) ?? null;
+  },
+
+  syncToBatchItems: (batchId: number, batch?: Batch): number => {
+    return syncBatchAttendanceToBatchItems(batchId, batch);
   },
 };
 

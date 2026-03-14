@@ -25,6 +25,8 @@ export const POST: RequestHandler = async ({ params, request }) => {
     }
     const saturdays =
       batch.type === "special" ? 0 : (data.saturdays_attended ?? 0);
+    const wednesdays =
+      batch.type === "special" ? 0 : (data.wednesdays_attended ?? 0);
     const zoomType =
       batch.type === "special" ? "none" : (data.zoom_type ?? "none");
     const customZoomAmount =
@@ -48,6 +50,7 @@ export const POST: RequestHandler = async ({ params, request }) => {
       data.recipient_id,
       amount,
       saturdays,
+      wednesdays,
       zoomType,
       customZoomAmount,
     );

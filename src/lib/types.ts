@@ -1,4 +1,5 @@
 export type ZoomType = "none" | "single" | "family" | "custom";
+export type AttendanceType = "saturday" | "wednesday";
 
 export interface Recipient {
   id?: number;
@@ -43,6 +44,7 @@ export interface BatchItem {
   amount: number;
   payment_method: "transfer" | "cash";
   saturdays_attended: number;
+  wednesdays_attended: number;
   zoom_type: ZoomType;
   custom_zoom_amount: number;
   transfer_status: "pending" | "done";
@@ -66,6 +68,17 @@ export interface BatchItem {
   actual_account_holder?: string;
   family_group_id?: number | null;
   transfer_fee: number;
+}
+
+export interface AttendanceRecord {
+  id?: number;
+  batch_id: number;
+  recipient_id: number;
+  attendance_type: AttendanceType;
+  attendance_date: string; // YYYY-MM-DD
+  attended: number; // 1 = hadir, 0 = tidak hadir
+  created_at: string;
+  updated_at: string;
 }
 
 export function calculateAmount(
