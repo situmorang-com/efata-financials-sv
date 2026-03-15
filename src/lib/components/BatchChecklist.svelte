@@ -292,7 +292,7 @@
 			item.transfer_fee = 0;
 		}
 		try {
-			await fetch(`/api/batches/${batchId}/items/${item.id}`, {
+			const res = await fetch(`/api/batches/${batchId}/items/${item.id}`, {
 				method: 'PUT',
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({
@@ -300,11 +300,24 @@
 					transfer_fee: method === 'cash' ? 0 : item.transfer_fee
 				})
 			});
+			if (!res.ok) {
+				let message = 'Gagal menyimpan metode pembayaran';
+				try {
+					const payload = await res.json();
+					message = payload?.error || message;
+				} catch {
+					// no-op
+				}
+				throw new Error(message);
+			}
 		} catch (e) {
 			item.payment_method = prevMethod;
 			item.transfer_fee = prevFee;
 			console.error('Failed to update payment method:', e);
-			addToast('Gagal mengubah metode pembayaran', 'error');
+			addToast(
+				e instanceof Error ? e.message : 'Gagal mengubah metode pembayaran',
+				'error'
+			);
 		}
 	}
 

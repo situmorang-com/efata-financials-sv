@@ -575,6 +575,11 @@ db.exec(`
     ELSE 'transfer'
   END
 `);
+db.exec(`
+  UPDATE batch_items
+  SET wednesdays_attended = 0
+  WHERE wednesdays_attended IS NULL
+`);
 
 function normalizeBatchPaymentMethod(value?: string | null): "transfer" | "cash" {
   return String(value || "").trim().toLowerCase() === "cash"
@@ -1324,6 +1329,14 @@ export const batchItemDb = {
     if (!existing) return false;
     const now = new Date().toISOString();
     const updated = { ...existing, ...data };
+    updated.saturdays_attended = Math.max(
+      0,
+      Math.round(Number(updated.saturdays_attended ?? 0) || 0),
+    );
+    updated.wednesdays_attended = Math.max(
+      0,
+      Math.round(Number(updated.wednesdays_attended ?? 0) || 0),
+    );
     const normalizedPaymentMethod = normalizeBatchPaymentMethod(
       updated.payment_method,
     );
