@@ -17,6 +17,7 @@
 	import CircleOff from '@lucide/svelte/icons/circle-off';
 	import CircleCheck from '@lucide/svelte/icons/circle-check';
 	import Search from '@lucide/svelte/icons/search';
+	import X from '@lucide/svelte/icons/x';
 
 	type ImportRow = {
 		id: number;
@@ -69,6 +70,12 @@
 		amount_diff: number;
 	};
 
+	type CategoryOption = {
+		id: number;
+		name: string;
+		kind: 'income' | 'expense';
+	};
+
 	let loadingImports = $state(true);
 	let loadingLines = $state(false);
 	let imports = $state<ImportRow[]>([]);
@@ -83,6 +90,17 @@
 	let loadingCandidatesFor = $state<number | null>(null);
 	let candidateQuery = $state<Record<number, string>>({});
 	let closing = $state(false);
+	let incomeCategories = $state<CategoryOption[]>([]);
+	let expenseCategories = $state<CategoryOption[]>([]);
+	let showCreateModal = $state(false);
+	let createSaving = $state(false);
+	let createTargetLine = $state<LineRow | null>(null);
+	let createForm = $state({
+		sub_type: 'other_income' as 'tithe' | 'offering' | 'other_income' | 'expense',
+		category_id: '',
+		service_label: '',
+		payment_method: 'transfer'
+	});
 
 	function dateLabel(value?: string | null): string {
 		if (!value) return '-';
@@ -111,6 +129,63 @@
 			return `${item.linked_account_name} (${rawNo})`;
 		}
 		return item.account_no;
+	}
+
+	function normalizeText(value?: string | null): string {
+		return String(value || '').toLowerCase();
+	}
+
+	function guessIncomeSubType(line: LineRow): 'tithe' | 'offering' | 'other_income' {
+		const raw = normalizeText(`${line.remarks || ''} ${line.additional_desc || ''}`);
+		if (raw.includes('persepuluhan') || raw.includes('perpuluhan')) return 'tithe';
+		if (raw.includes('persembahan')) return 'offering';
+		return 'other_income';
+	}
+
+	function categoryIdByName(options: CategoryOption[], name: string): string {
+		const target = name.toLowerCase();
+		const found = options.find((item) => item.name.toLowerCase() === target);
+		return found?.id ? String(found.id) : '';
+	}
+
+	function defaultIncomeCategoryId(
+		subType: 'tithe' | 'offering' | 'other_income' | 'expense'
+	): string {
+		if (subType === 'tithe') {
+			return categoryIdByName(incomeCategories, 'Persepuluhan') || String(incomeCategories[0]?.id || '');
+		}
+		if (subType === 'offering') {
+			return categoryIdByName(incomeCategories, 'Persembahan') || String(incomeCategories[0]?.id || '');
+		}
+		return categoryIdByName(incomeCategories, 'Donasi') || String(incomeCategories[0]?.id || '');
+	}
+
+	function defaultExpenseCategoryId(): string {
+		return categoryIdByName(expenseCategories, 'Operasional Gereja') || String(expenseCategories[0]?.id || '');
+	}
+
+	function activeCreateCategories(): CategoryOption[] {
+		if (!createTargetLine) return [];
+		return createTargetLine.signed_amount >= 0 ? incomeCategories : expenseCategories;
+	}
+
+	async function loadCategoryLookups() {
+		try {
+			const [incomeRes, expenseRes] = await Promise.all([
+				fetch('/api/finance/categories?kind=income'),
+				fetch('/api/finance/categories?kind=expense')
+			]);
+			const incomePayload = await incomeRes.json();
+			const expensePayload = await expenseRes.json();
+			if (!incomeRes.ok || !expenseRes.ok) {
+				throw new Error('Gagal memuat kategori');
+			}
+			incomeCategories = Array.isArray(incomePayload) ? (incomePayload as CategoryOption[]) : [];
+			expenseCategories = Array.isArray(expensePayload) ? (expensePayload as CategoryOption[]) : [];
+		} catch (err) {
+			console.error('Failed to load categories for reconciliation create flow:', err);
+			addToast('Gagal memuat kategori transaksi', 'error');
+		}
 	}
 
 	async function loadImports() {
@@ -242,17 +317,84 @@
 		}
 	}
 
-	async function actionCreateTransaction(lineId: number) {
+	async function openCreateTransactionDialog(line: LineRow) {
+		if (incomeCategories.length === 0 || expenseCategories.length === 0) {
+			await loadCategoryLookups();
+		}
+		if (line.signed_amount >= 0 && incomeCategories.length === 0) {
+			addToast('Kategori income belum tersedia. Tambahkan kategori dulu.', 'error');
+			return;
+		}
+		if (line.signed_amount < 0 && expenseCategories.length === 0) {
+			addToast('Kategori expense belum tersedia. Tambahkan kategori dulu.', 'error');
+			return;
+		}
+		createTargetLine = line;
+		if (line.signed_amount >= 0) {
+			const guessedType = guessIncomeSubType(line);
+			createForm.sub_type = guessedType;
+			createForm.category_id = defaultIncomeCategoryId(guessedType);
+		} else {
+			createForm.sub_type = 'expense';
+			createForm.category_id = defaultExpenseCategoryId();
+		}
+		createForm.service_label = String(line.remarks || line.additional_desc || '').trim().slice(0, 120);
+		createForm.payment_method = 'transfer';
+		showCreateModal = true;
+	}
+
+	function closeCreateTransactionDialog() {
+		showCreateModal = false;
+		createTargetLine = null;
+		createSaving = false;
+	}
+
+	function onCreateSubTypeChange() {
+		if (!createTargetLine || createTargetLine.signed_amount < 0) return;
+		createForm.category_id = defaultIncomeCategoryId(createForm.sub_type);
+	}
+
+	async function confirmCreateTransaction() {
+		if (!createTargetLine) return;
+		if (!createForm.category_id) {
+			addToast('Kategori wajib dipilih sebelum membuat transaksi', 'warning');
+			return;
+		}
+		if (
+			createTargetLine.signed_amount >= 0 &&
+			!['tithe', 'offering', 'other_income'].includes(createForm.sub_type)
+		) {
+			addToast('Jenis income wajib dipilih', 'warning');
+			return;
+		}
+
+		createSaving = true;
 		try {
-			const res = await fetch(`/api/finance/reconciliation/lines/${lineId}/create-transaction`, { method: 'POST' });
+			const res = await fetch(
+				`/api/finance/reconciliation/lines/${createTargetLine.id}/create-transaction`,
+				{
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({
+						sub_type:
+							createTargetLine.signed_amount >= 0 ? createForm.sub_type : 'expense',
+						category_id: Number(createForm.category_id),
+						service_label: createForm.service_label,
+						payment_method: createForm.payment_method
+					})
+				}
+			);
 			const payload = await res.json();
 			if (!res.ok) throw new Error(payload?.error || 'Create transaction gagal');
 			addToast(`Transaksi #${payload.id} dibuat & di-match`, 'success');
+			closeCreateTransactionDialog();
 			await loadImports();
 			await loadLines();
 		} catch (err) {
 			console.error('Create transaction failed:', err);
 			addToast(err instanceof Error ? err.message : 'Gagal create transaction', 'error');
+		} finally {
+			createSaving = false;
 		}
 	}
 
@@ -323,6 +465,7 @@
 
 	$effect(() => {
 		loadImports();
+		loadCategoryLookups();
 	});
 
 	$effect(() => {
@@ -493,19 +636,19 @@
 													-
 												{/if}
 											</td>
-											<td class="px-3 py-2.5">
-												<div class="flex items-center justify-center gap-1 flex-wrap">
-													{#if line.match_status === 'suggested' && line.suggested_txn_id}
-														<button type="button" onclick={() => actionMatch(line.id, line.suggested_txn_id!)} class="glass-button rounded-lg px-2 py-1 text-[11px] text-emerald-100 inline-flex items-center gap-1"><Link class="w-3 h-3" />Match</button>
-													{/if}
-													{#if line.match_status !== 'matched'}
-														<button type="button" onclick={() => actionCreateTransaction(line.id)} class="glass-button rounded-lg px-2 py-1 text-[11px] text-sky-100">Create Txn</button>
-														<button type="button" onclick={() => actionIgnore(line.id)} class="glass-button rounded-lg px-2 py-1 text-[11px] text-white/80 inline-flex items-center gap-1"><CircleOff class="w-3 h-3" />Ignore</button>
-													{:else}
-														<button type="button" onclick={() => actionUnmatch(line.id)} class="glass-button rounded-lg px-2 py-1 text-[11px] text-amber-100 inline-flex items-center gap-1"><CircleCheck class="w-3 h-3" />Unmatch</button>
-													{/if}
-													<button type="button" onclick={() => toggleExpand(line.id)} class="glass-button rounded-lg px-2 py-1 text-[11px] text-white/80 inline-flex items-center gap-1"><Search class="w-3 h-3" />Candidates</button>
-												</div>
+												<td class="px-3 py-2.5">
+													<div class="flex items-center justify-center gap-1 flex-wrap">
+														{#if line.match_status === 'suggested' && line.suggested_txn_id}
+															<button type="button" onclick={() => actionMatch(line.id, line.suggested_txn_id!)} class="glass-button rounded-lg px-2 py-1 text-[11px] text-emerald-100 inline-flex items-center gap-1"><Link class="w-3 h-3" />Match</button>
+														{/if}
+														{#if line.match_status !== 'matched'}
+															<button type="button" onclick={() => openCreateTransactionDialog(line)} class="glass-button rounded-lg px-2 py-1 text-[11px] text-sky-100">Create Txn</button>
+															<button type="button" onclick={() => actionIgnore(line.id)} class="glass-button rounded-lg px-2 py-1 text-[11px] text-white/80 inline-flex items-center gap-1"><CircleOff class="w-3 h-3" />Ignore</button>
+														{:else}
+															<button type="button" onclick={() => actionUnmatch(line.id)} class="glass-button rounded-lg px-2 py-1 text-[11px] text-amber-100 inline-flex items-center gap-1"><CircleCheck class="w-3 h-3" />Unmatch</button>
+														{/if}
+														<button type="button" onclick={() => toggleExpand(line.id)} class="glass-button rounded-lg px-2 py-1 text-[11px] text-white/80 inline-flex items-center gap-1"><Search class="w-3 h-3" />Candidates</button>
+													</div>
 											</td>
 										</tr>
 										{#if expandedLineId === line.id}
@@ -547,6 +690,63 @@
 						</div>
 					</div>
 				{/if}
+			</div>
+		</div>
+	{/if}
+
+	{#if showCreateModal && createTargetLine}
+		<div class="fixed inset-0 z-50 bg-slate-950/65 backdrop-blur-sm p-4 flex items-center justify-center">
+			<div class="glass-card rounded-2xl w-full max-w-2xl p-5 max-h-[90vh] overflow-y-auto glass-scrollbar">
+				<div class="flex items-start justify-between gap-3 mb-4">
+					<div>
+						<h3 class="text-white font-semibold brand-font">Konfirmasi Create Transaction</h3>
+						<p class="text-white/55 text-xs mt-1">Pilih jenis dan kategori sebelum transaksi dibuat dari mutasi bank.</p>
+					</div>
+					<button type="button" onclick={closeCreateTransactionDialog} class="glass-button rounded-lg p-1.5 text-white/70 hover:text-white">
+						<X class="w-4 h-4" />
+					</button>
+				</div>
+
+				<div class="glass rounded-xl p-3 mb-4 text-xs text-white/70 space-y-1">
+					<div>Tanggal: <span class="text-white">{dateTimeLabel(createTargetLine.post_date)}</span></div>
+					<div>Amount: <span class="{createTargetLine.signed_amount >= 0 ? 'text-emerald-200' : 'text-rose-200'}">{createTargetLine.signed_amount >= 0 ? '+' : '-'}{formatRupiah(Math.abs(createTargetLine.signed_amount))}</span></div>
+					<div class="break-all">Deskripsi: <span class="text-white/85">{createTargetLine.remarks || createTargetLine.additional_desc || '-'}</span></div>
+				</div>
+
+				<div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+					<div>
+						<label class="block text-white/60 text-xs uppercase tracking-wider mb-1.5">Jenis</label>
+						{#if createTargetLine.signed_amount >= 0}
+							<select bind:value={createForm.sub_type} onchange={onCreateSubTypeChange} class="w-full glass-input rounded-xl px-3 py-2 text-white text-sm">
+								<option value="tithe">Persepuluhan</option>
+								<option value="offering">Persembahan</option>
+								<option value="other_income">Lainnya</option>
+							</select>
+						{:else}
+							<div class="w-full glass-input rounded-xl px-3 py-2 text-white text-sm">Expense</div>
+						{/if}
+					</div>
+					<div>
+						<label class="block text-white/60 text-xs uppercase tracking-wider mb-1.5">Kategori</label>
+						<select bind:value={createForm.category_id} class="w-full glass-input rounded-xl px-3 py-2 text-white text-sm">
+							<option value="">Pilih kategori...</option>
+							{#each activeCreateCategories() as category}
+								<option value={String(category.id)}>{category.name}</option>
+							{/each}
+						</select>
+					</div>
+					<div class="md:col-span-2">
+						<label class="block text-white/60 text-xs uppercase tracking-wider mb-1.5">Tujuan Dana / Service Label</label>
+						<input type="text" bind:value={createForm.service_label} class="w-full glass-input rounded-xl px-3 py-2 text-white text-sm" placeholder="opsional" />
+					</div>
+				</div>
+
+				<div class="mt-4 flex justify-end gap-2">
+					<button type="button" onclick={closeCreateTransactionDialog} class="glass-button rounded-xl px-4 py-2 text-white/80 text-sm">Batal</button>
+					<button type="button" disabled={createSaving} onclick={confirmCreateTransaction} class="glass-button rounded-xl px-4 py-2 text-white text-sm bg-sky-500/25 hover:bg-sky-500/40 disabled:opacity-70">
+						{createSaving ? 'Membuat...' : 'Create & Match'}
+					</button>
+				</div>
 			</div>
 		</div>
 	{/if}

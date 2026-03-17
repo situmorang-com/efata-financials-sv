@@ -2684,6 +2684,13 @@ type ReconLineWithHints = {
   suggested_service_label: string | null;
 };
 
+type ReconCreateTxnInput = {
+  sub_type?: "tithe" | "offering" | "other_income" | "expense";
+  category_id?: number;
+  service_label?: string;
+  payment_method?: string;
+};
+
 function normalizeReconText(value?: string | null): string {
   return String(value || "")
     .toLowerCase()
@@ -3136,7 +3143,10 @@ export const financeReconciliationDb = {
     return result.changes > 0;
   },
 
-  createTransactionForLine: (lineId: number): FinanceTransaction | null => {
+  createTransactionForLine: (
+    lineId: number,
+    input?: ReconCreateTxnInput,
+  ): FinanceTransaction | null => {
     const line = db
       .prepare(
         `SELECT l.*, i.linked_account_id
@@ -3161,58 +3171,68 @@ export const financeReconciliationDb = {
 
     const expected = Math.max(0, Math.round(Math.abs(line.signed_amount || 0)));
     if (expected <= 0) return null;
-    const descNorm = line.description_norm || "";
     const rawDesc = `${line.remarks || ""} ${line.additional_desc || ""}`.trim();
     const txnDate = line.post_date;
     const referenceNo = `BANK:${line.import_id}:${line.line_no}`;
     const notes = `[BANK_RECON_IMPORT] ${rawDesc}`.trim();
+    const requestedSubType = String(input?.sub_type || "").trim();
+    const requestedCategoryId = Number(input?.category_id);
+    const hasRequestedCategory =
+      Number.isFinite(requestedCategoryId) && requestedCategoryId > 0;
+    const requestedServiceLabel = String(input?.service_label || "").trim();
+    const paymentMethod = String(input?.payment_method || "").trim() || "transfer";
 
     let created: FinanceTransaction;
     if (line.signed_amount >= 0) {
-      const isTithe =
-        descNorm.includes("persepuluhan") || descNorm.includes("perpuluhan");
-      const isOffering = descNorm.includes("persembahan");
-      const subType = isTithe
-        ? "tithe"
-        : isOffering
-          ? "offering"
-          : "other_income";
-      const categoryName = isTithe
-        ? "Persepuluhan"
-        : isOffering
-          ? "Persembahan"
-          : "Donasi";
-      const categoryId = ensureIncomeCategoryId(categoryName);
+      if (!["tithe", "offering", "other_income"].includes(requestedSubType)) {
+        throw new Error(
+          "Pilih Jenis (Persepuluhan/Persembahan/Lainnya) sebelum membuat transaksi income.",
+        );
+      }
+      if (!hasRequestedCategory) {
+        throw new Error("Pilih Kategori income sebelum membuat transaksi.");
+      }
+      const selectedCategory = financeCategoryDb.getById(
+        requestedCategoryId,
+      ) as FinanceCategory | undefined;
+      if (!selectedCategory || selectedCategory.kind !== "income") {
+        throw new Error("Kategori yang dipilih harus kategori income.");
+      }
       created = financeTransactionDb.create({
         type: "income",
-        sub_type: subType,
-        category_id: categoryId,
+        sub_type: requestedSubType as "tithe" | "offering" | "other_income",
+        category_id: requestedCategoryId,
         account_id: line.linked_account_id ?? null,
         amount: expected,
         txn_date: txnDate,
-        payment_method: "transfer",
-        service_label: rawDesc.slice(0, 120) || "Bank Statement Import",
+        payment_method: paymentMethod,
+        service_label: requestedServiceLabel || rawDesc.slice(0, 120) || "Bank Statement Import",
         reference_no: referenceNo,
         status: "posted",
         notes,
       });
     } else {
-      const isBankFee =
-        descNorm.includes("biaya adm") ||
-        descNorm.includes("pajak") ||
-        descNorm.includes("transfer fee");
-      const categoryId = ensureExpenseCategoryId(
-        isBankFee ? "Biaya Transfer Bank" : "Operasional Gereja",
-      );
+      if (requestedSubType && requestedSubType !== "expense") {
+        throw new Error("Baris mutasi debit hanya bisa dibuat sebagai expense.");
+      }
+      if (!hasRequestedCategory) {
+        throw new Error("Pilih Kategori expense sebelum membuat transaksi.");
+      }
+      const selectedCategory = financeCategoryDb.getById(
+        requestedCategoryId,
+      ) as FinanceCategory | undefined;
+      if (!selectedCategory || selectedCategory.kind !== "expense") {
+        throw new Error("Kategori yang dipilih harus kategori expense.");
+      }
       created = financeTransactionDb.create({
         type: "expense",
         sub_type: "expense",
-        category_id: categoryId,
+        category_id: requestedCategoryId,
         account_id: line.linked_account_id ?? null,
         amount: expected,
         txn_date: txnDate,
-        payment_method: "transfer",
-        service_label: rawDesc.slice(0, 120) || "Imported Expense",
+        payment_method: paymentMethod,
+        service_label: requestedServiceLabel || rawDesc.slice(0, 120) || "Imported Expense",
         reference_no: referenceNo,
         status: "posted",
         notes,
