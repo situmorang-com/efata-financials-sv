@@ -15,7 +15,6 @@
 	import LayoutDashboard from '@lucide/svelte/icons/layout-dashboard';
 	import Layers from '@lucide/svelte/icons/layers';
 	import UserPlus from '@lucide/svelte/icons/user-plus';
-	import CheckCheck from '@lucide/svelte/icons/check-check';
 	import Search from '@lucide/svelte/icons/search';
 	import SearchX from '@lucide/svelte/icons/search-x';
 	import UsersIcon from '@lucide/svelte/icons/users';
@@ -126,6 +125,38 @@
 
 	function normalizeKeyPart(value?: string | null): string {
 		return String(value || '').trim().toLowerCase();
+	}
+
+	function isDanaAccount(bankName?: string | null): boolean {
+		return normalizeKeyPart(bankName) === 'dana';
+	}
+
+	function normalizeDanaPhoneNumber(value?: string | null): string {
+		const digits = normalizeAccountNumber(value);
+		if (!digits) return '';
+		if (digits.startsWith('62')) return `0${digits.slice(2)}`;
+		if (digits.startsWith('8')) return `0${digits}`;
+		return digits;
+	}
+
+	function getDanaClipboardValue(bankName?: string | null, accountNumber?: string | null): string | null {
+		if (!isDanaAccount(bankName)) return null;
+		const normalizedPhone = normalizeDanaPhoneNumber(accountNumber);
+		if (!normalizedPhone) return null;
+		return `89508${normalizedPhone}`;
+	}
+
+	async function copyDanaAccount(bankName?: string | null, accountNumber?: string | null) {
+		const clipboardValue = getDanaClipboardValue(bankName, accountNumber);
+		if (!clipboardValue) return;
+
+		try {
+			await navigator.clipboard.writeText(clipboardValue);
+			addToast(`Tersalin: ${clipboardValue}`, 'success');
+		} catch (error) {
+			console.error('Failed to copy DANA account:', error);
+			addToast('Gagal menyalin nomor DANA', 'error');
+		}
 	}
 
 	function getFamilyTransferKey(item: BatchItem): string | null {
@@ -625,26 +656,6 @@
 		}
 	}
 
-	async function markAllTransferred() {
-		if (!ensureEditMode()) return;
-		const pendingIds = items.filter(i => i.transfer_status === 'pending').map(i => i.id!);
-		if (pendingIds.length === 0) return;
-		try {
-			await fetch(`/api/batches/${batchId}/bulk-transfer`, {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ item_ids: pendingIds })
-			});
-			addToast(`${pendingIds.length} transfer ditandai selesai`, 'success');
-			await loadData();
-			await autoSkipMissingWhatsapp();
-			await maybeCompleteBatch();
-		} catch (e) {
-			console.error('Failed to bulk update:', e);
-			addToast('Gagal menandai semua transfer', 'error');
-		}
-	}
-
 	function formatDateInput(value?: string | null): string {
 		if (!value) return '';
 		const d = new Date(value);
@@ -698,24 +709,6 @@
 			addToast('Gagal membuat PDF', 'error');
 		} finally {
 			downloading = false;
-		}
-	}
-
-	async function setAllFullAttendance() {
-		if (!ensureEditMode()) return;
-		if (!batch) return;
-		if (batch.type === 'special') return;
-		try {
-			await fetch(`/api/batches/${batchId}/bulk-saturdays`, {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ saturdays: batch.total_saturdays })
-			});
-			addToast(`Semua ditandai hadir penuh (${batch.total_saturdays} Sabat)`, 'success');
-			await loadData();
-		} catch (e) {
-			console.error('Failed to bulk update saturdays:', e);
-			addToast('Gagal mengubah kehadiran', 'error');
 		}
 	}
 
@@ -961,26 +954,6 @@
 						<Download class="w-4 h-4" />
 						{downloading ? 'Membuat PDF...' : 'Unduh PDF'}
 					</button>
-					{#if !isSpecial}
-						<button
-							onclick={setAllFullAttendance}
-							disabled={!isEditMode}
-							class="glass-button rounded-full px-3 py-2 text-white text-sm border border-emerald-500/20 flex items-center gap-1.5
-								{!isEditMode ? 'opacity-50 cursor-not-allowed bg-emerald-500/10' : 'bg-emerald-500/10 hover:bg-emerald-500/25'}"
-						>
-							<CalendarDays class="w-4 h-4" />
-							Hadir Penuh
-						</button>
-					{/if}
-					<button
-						onclick={markAllTransferred}
-						disabled={!isEditMode || pendingTransferCount === 0}
-						class="glass-button rounded-full px-3 py-2 text-white text-sm border border-emerald-500/30 flex items-center gap-1.5
-							{!isEditMode || pendingTransferCount === 0 ? 'opacity-50 cursor-not-allowed' : 'bg-emerald-500/20 hover:bg-emerald-500/40'}"
-					>
-						<CheckCheck class="w-4 h-4" />
-						Tandai Semua Lunas
-					</button>
 				</div>
 			</div>
 			<div class="glass-card rounded-xl p-2.5 mb-3 flex items-center gap-2 text-xs {isEditMode ? 'border border-amber-400/30 text-amber-100 bg-amber-500/10' : 'border border-white/10 text-white/70'}">
@@ -1204,11 +1177,31 @@
 										{#if item.transfer_to_id}
 											<div class="text-white/70 text-xs">
 												<span class="text-amber-200/60">&#8594;</span>
-												{item.actual_bank_name} <span class="font-mono">{item.actual_account_number}</span>
+												{item.actual_bank_name}
+												{#if isDanaAccount(item.actual_bank_name)}
+													<button
+														type="button"
+														class="font-mono text-inherit bg-transparent border-0 p-0 m-0 cursor-copy"
+														title="Double click untuk copy format transfer DANA"
+														ondblclick={() => copyDanaAccount(item.actual_bank_name, item.actual_account_number)}
+													>{item.actual_account_number}</button>
+												{:else}
+													<span class="font-mono">{item.actual_account_number}</span>
+												{/if}
 											</div>
 										{:else if item.bank_name}
 											<div class="text-white/70 text-xs">
-												{item.bank_name} <span class="font-mono">{item.account_number}</span>
+												{item.bank_name}
+												{#if isDanaAccount(item.bank_name)}
+													<button
+														type="button"
+														class="font-mono text-inherit bg-transparent border-0 p-0 m-0 cursor-copy"
+														title="Double click untuk copy format transfer DANA"
+														ondblclick={() => copyDanaAccount(item.bank_name, item.account_number)}
+													>{item.account_number}</button>
+												{:else}
+													<span class="font-mono">{item.account_number}</span>
+												{/if}
 											</div>
 										{:else}
 											<span class="text-white/30 text-xs">-</span>
@@ -1390,11 +1383,31 @@
 									{#if item.transfer_to_id}
 										<p class="text-white/50 text-xs">
 											<span class="text-amber-200/60">&#8594;</span>
-											{item.actual_bank_name} <span class="font-mono">{item.actual_account_number}</span>
+											{item.actual_bank_name}
+											{#if isDanaAccount(item.actual_bank_name)}
+												<button
+													type="button"
+													class="font-mono text-inherit bg-transparent border-0 p-0 m-0 cursor-copy"
+													title="Double click untuk copy format transfer DANA"
+													ondblclick={() => copyDanaAccount(item.actual_bank_name, item.actual_account_number)}
+												>{item.actual_account_number}</button>
+											{:else}
+												<span class="font-mono">{item.actual_account_number}</span>
+											{/if}
 										</p>
 									{:else if item.bank_name}
 										<p class="text-white/50 text-xs">
-											{item.bank_name} <span class="font-mono">{item.account_number}</span>
+											{item.bank_name}
+											{#if isDanaAccount(item.bank_name)}
+												<button
+													type="button"
+													class="font-mono text-inherit bg-transparent border-0 p-0 m-0 cursor-copy"
+													title="Double click untuk copy format transfer DANA"
+													ondblclick={() => copyDanaAccount(item.bank_name, item.account_number)}
+												>{item.account_number}</button>
+											{:else}
+												<span class="font-mono">{item.account_number}</span>
+											{/if}
 										</p>
 									{/if}
 								</div>
