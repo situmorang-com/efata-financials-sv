@@ -31,7 +31,7 @@
 	let proofImage = $state<string | null>(null);
 	let showModal = $state(false);
 	let modalEl: HTMLDivElement;
-	let fileInput: HTMLInputElement;
+	let fileInput = $state<HTMLInputElement | undefined>(undefined);
 	let uploadProgress = $state('');
 
 	// Portal: move modal to document.body so it escapes overflow/transform ancestors
@@ -313,10 +313,12 @@
 			onkeydown={(e) => { if (e.key === 'Escape') showModal = false; }}
 			tabindex="-1"
 		>
-			<!-- svelte-ignore a11y_no_static_element_interactions -->
 			<div
 				class="relative max-w-[90vw] max-h-[90vh] overflow-auto rounded-lg"
 				onclick={(e) => e.stopPropagation()}
+				onkeydown={(e) => e.stopPropagation()}
+				role="presentation"
+				tabindex="-1"
 			>
 				<img
 					src={proofImage}

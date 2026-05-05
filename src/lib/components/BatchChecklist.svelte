@@ -31,7 +31,7 @@
 	let batch = $state<Batch | null>(null);
 	let items = $state<BatchItem[]>([]);
 	let loading = $state(true);
-	let filterMode = $state<'all' | 'pending-transfer' | 'pending-notify'>('all');
+	let filterMode = $state<'all' | 'pending-transfer' | 'pending-notify' | 'zero-amount'>('all');
 	let searchQuery = $state('');
 	let completing = $state(false);
 	let autoSkipping = $state(false);
@@ -68,6 +68,10 @@
 		return normalizePaymentMethod(item.payment_method) === 'cash';
 	}
 
+	function isZeroAmount(item: BatchItem): boolean {
+		return item.amount === 0;
+	}
+
 	function ensureEditMode(): boolean {
 		if (isEditMode) return true;
 		addToast('Aktifkan mode Edit dulu', 'info');
@@ -96,11 +100,15 @@
 			.reduce((sum, i) => sum + i.amount, 0)
 	);
 	let totalPaidSummary = $derived(transferAmountPaidTotal + transferFeePaidTotal + cashPaidTotal);
-	let pendingTransferCount = $derived(items.filter(i => i.transfer_status === 'pending').length);
+	let pendingTransferCount = $derived(items.filter(i => i.transfer_status === 'pending' && !isZeroAmount(i)).length);
 	let pendingNotifyCount = $derived(items.filter(i => i.transfer_status === 'done' && i.notify_status === 'pending').length);
+	let zeroAmountCount = $derived(items.filter(isZeroAmount).length);
 	let allDone = $derived(
 		items.length > 0 &&
-		items.every(i => i.transfer_status === 'done' && (i.notify_status === 'sent' || i.notify_status === 'skipped'))
+		items.every(i =>
+			isZeroAmount(i) ||
+			(i.transfer_status === 'done' && (i.notify_status === 'sent' || i.notify_status === 'skipped'))
+		)
 	);
 	let avgAttendance = $derived(
 		items.length > 0
@@ -225,8 +233,9 @@
 
 	let visibleItems = $derived(
 		items.filter(i => {
-			if (filterMode === 'pending-transfer' && i.transfer_status !== 'pending') return false;
+			if (filterMode === 'pending-transfer' && (i.transfer_status !== 'pending' || isZeroAmount(i))) return false;
 			if (filterMode === 'pending-notify' && !(i.transfer_status === 'done' && i.notify_status === 'pending')) return false;
+			if (filterMode === 'zero-amount' && !isZeroAmount(i)) return false;
 			return matchesSearch(i, searchQuery);
 		})
 	);
@@ -357,6 +366,19 @@
 		const nextStatus: 'pending' | 'done' = item.transfer_status === 'done' ? 'pending' : 'done';
 		const nextTransferAt = nextStatus === 'done' ? new Date().toISOString() : null;
 		const nextNotifyStatus = nextStatus === 'pending' ? 'pending' : item.notify_status;
+
+		// Optimistic update
+		const prevMethod = item.payment_method;
+		const prevStatus = item.transfer_status;
+		const prevTransferAt = item.transfer_at;
+		const prevNotifyStatus = item.notify_status;
+		item.payment_method = 'cash';
+		item.transfer_status = nextStatus;
+		item.transfer_at = nextTransferAt || undefined;
+		if (nextStatus === 'pending') {
+			item.notify_status = 'pending';
+		}
+
 		try {
 			await fetch(`/api/batches/${batchId}/items/${item.id}`, {
 				method: 'PUT',
@@ -368,12 +390,6 @@
 					notify_status: nextNotifyStatus
 				})
 			});
-			item.payment_method = 'cash';
-			item.transfer_status = nextStatus;
-			item.transfer_at = nextTransferAt || undefined;
-			if (nextStatus === 'pending') {
-				item.notify_status = 'pending';
-			}
 			addToast(
 				nextStatus === 'done'
 					? `Cash ${item.recipient_name} ditandai lunas`
@@ -383,6 +399,11 @@
 			await autoSkipMissingWhatsapp();
 			await maybeCompleteBatch();
 		} catch (e) {
+			// Revert on failure
+			item.payment_method = prevMethod;
+			item.transfer_status = prevStatus;
+			item.transfer_at = prevTransferAt;
+			item.notify_status = prevNotifyStatus;
 			console.error('Failed to toggle cash paid:', e);
 			addToast('Gagal mengubah status pembayaran cash', 'error');
 		}
@@ -435,8 +456,10 @@
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({ item_ids: ids, status: 'skipped' })
 			});
-			// Update local state
-			items = items.map(i => ids.includes(i.id!) ? { ...i, notify_status: 'skipped' } : i);
+			// Update local state in place to preserve reactive references
+			for (const i of items) {
+				if (ids.includes(i.id!)) i.notify_status = 'skipped';
+			}
 		} catch (e) {
 			console.error('Failed to auto-skip notify for missing WhatsApp:', e);
 		} finally {
@@ -728,6 +751,7 @@
 	}
 
 	function getRowClass(item: BatchItem): string {
+		if (isZeroAmount(item)) return 'row-zero-amount';
 		if (item.transfer_status === 'done' && item.notify_status === 'sent') return 'row-completed';
 		if (isCash(item)) return 'row-cash';
 		if (item.transfer_status === 'done') return 'row-transferred';
@@ -1055,6 +1079,14 @@
 						>
 							Belum Notif ({pendingNotifyCount})
 						</button>
+						{#if zeroAmountCount > 0}
+							<button
+								onclick={() => { filterMode = 'zero-amount'; }}
+								class="nav-pill {filterMode === 'zero-amount' ? 'nav-pill-active' : ''}"
+							>
+								Tidak Dapat ({zeroAmountCount})
+							</button>
+						{/if}
 					</div>
 					<div class="flex items-center gap-1 glass-dark rounded-full px-2 py-1">
 						<button
@@ -1369,7 +1401,7 @@
 			<!-- Mobile Card View (hidden on desktop) -->
 			<div class="lg:hidden space-y-3 fade-up">
 				{#each visibleItems as item, i}
-					<div class="glass-card rounded-xl p-4 {item.transfer_status === 'done' && item.notify_status === 'sent' ? 'border-l-4 border-l-emerald-500/50' : isCash(item) ? 'border-l-4 border-l-sky-400/60' : item.transfer_status === 'done' ? 'border-l-4 border-l-amber-500/50' : ''}">
+					<div class="glass-card rounded-xl p-4 {isZeroAmount(item) ? 'border-l-4 border-l-white/20 opacity-60' : item.transfer_status === 'done' && item.notify_status === 'sent' ? 'border-l-4 border-l-emerald-500/50' : isCash(item) ? 'border-l-4 border-l-sky-400/60' : item.transfer_status === 'done' ? 'border-l-4 border-l-amber-500/50' : ''}">
 						<div class="flex justify-between items-start gap-3">
 							<div class="flex-1 min-w-0">
 								<div class="flex items-center gap-2">
