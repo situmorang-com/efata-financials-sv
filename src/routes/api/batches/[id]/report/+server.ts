@@ -58,7 +58,8 @@ export const GET: RequestHandler = async ({ params }) => {
 
     const items = batchItemDb.getByBatchId(batchId);
 
-    const totalRecipients = items.length;
+    const totalRecipients = items.filter((i) => (i.amount || 0) > 0).length;
+    const zeroRecipients = items.filter((i) => (i.amount || 0) === 0).length;
     const transferredCount = items.filter((i) => i.transfer_status === "done")
       .length;
     const notifiedCount = items.filter((i) => i.notify_status === "sent").length;
@@ -337,7 +338,7 @@ export const GET: RequestHandler = async ({ params }) => {
       borderWidth: 1,
     });
     drawText(
-      `Penerima: ${totalRecipients}   •   Transfer Selesai: ${transferredCount}/${totalRecipients}   •   Notif WA: ${notifiedCount}/${totalRecipients} (Skip ${skippedCount})`,
+      `Penerima: ${totalRecipients}   •   Transfer Selesai: ${transferredCount}/${totalRecipients}   •   Notif WA: ${notifiedCount}/${totalRecipients} (Skip ${skippedCount})${zeroRecipients > 0 ? `   •   Tidak Dapat: ${zeroRecipients}` : ""}`,
       margin + 10,
       y - 16,
       9,
@@ -402,9 +403,12 @@ export const GET: RequestHandler = async ({ params }) => {
       y -= 20;
     };
 
+    const regularItems = items.filter((i) => (i.amount || 0) > 0);
+    const zeroItems = items.filter((i) => (i.amount || 0) === 0);
+
     drawTableHeader();
-    for (let i = 0; i < items.length; i++) {
-      const item = items[i];
+    for (let i = 0; i < regularItems.length; i++) {
+      const item = regularItems[i];
       const rowHeight = 18;
       if (y < margin + rowHeight + 6) {
         addPage();
@@ -470,6 +474,58 @@ export const GET: RequestHandler = async ({ params }) => {
         color: rgb(0.88, 0.92, 0.95),
       });
       y -= rowHeight;
+    }
+
+    // Zero-amount section
+    if (zeroItems.length > 0) {
+      if (y < margin + 60) addPage();
+      y -= 14;
+      page.drawRectangle({
+        x: margin,
+        y: y - 22,
+        width: contentWidth,
+        height: 22,
+        color: rgb(0.96, 0.96, 0.97),
+        borderColor: rgb(0.82, 0.84, 0.88),
+        borderWidth: 1,
+      });
+      drawText("Tidak Mendapat Transfer", margin + 10, y - 15, 9, true, rgb(0.35, 0.38, 0.44));
+      y -= 22;
+
+      for (let i = 0; i < zeroItems.length; i++) {
+        const item = zeroItems[i];
+        const rowHeight = 18;
+        if (y < margin + rowHeight + 6) {
+          addPage();
+          page.drawRectangle({
+            x: margin,
+            y: y - 22,
+            width: contentWidth,
+            height: 22,
+            color: rgb(0.96, 0.96, 0.97),
+            borderColor: rgb(0.82, 0.84, 0.88),
+            borderWidth: 1,
+          });
+          drawText("Tidak Mendapat Transfer (lanjutan)", margin + 10, y - 15, 9, true, rgb(0.35, 0.38, 0.44));
+          y -= 22;
+        }
+        if (i % 2 === 0) {
+          page.drawRectangle({
+            x: margin,
+            y: y - rowHeight,
+            width: contentWidth,
+            height: rowHeight,
+            color: rgb(0.985, 0.985, 0.99),
+          });
+        }
+        const recipientLabel = item.transfer_to_name
+          ? `${item.recipient_name || "-"} via ${item.transfer_to_name}`
+          : item.recipient_name || "-";
+        drawText(String(i + 1), colXs[0], y - 12, 8, false, rgb(0.5, 0.5, 0.55));
+        drawText(clip(recipientLabel, 34), colXs[1], y - 12, 8, false, rgb(0.5, 0.5, 0.55));
+        drawText("Kehadiran 0 / tidak dapat", colXs[2], y - 12, 8, false, rgb(0.5, 0.5, 0.55));
+        y -= rowHeight;
+      }
     }
 
     // Proof attachments
