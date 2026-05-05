@@ -342,6 +342,28 @@
 		syncMappedCategory();
 		syncDestination();
 	});
+
+	const incomeSubTypeId = 'income-sub-type';
+	const incomeTxnDateId = 'income-txn-date';
+	const incomeAmountId = 'income-amount';
+	const incomeCategoryId = 'income-category';
+	const incomeServiceLabelId = 'income-service-label';
+	const incomeAccountId = 'income-account';
+	const incomeMethodId = 'income-method';
+	const incomePartyId = 'income-party';
+	const incomeReferenceId = 'income-reference';
+	const incomeNotesId = 'income-notes';
+	const editIncomeSubTypeId = 'edit-income-sub-type';
+	const editIncomeTxnDateId = 'edit-income-txn-date';
+	const editIncomeAmountId = 'edit-income-amount';
+	const editIncomeCategoryId = 'edit-income-category';
+	const editIncomeAccountId = 'edit-income-account';
+	const editIncomeMethodId = 'edit-income-method';
+	const editIncomeServiceLabelId = 'edit-income-service-label';
+	const editIncomePartyId = 'edit-income-party';
+	const editIncomeReferenceId = 'edit-income-reference';
+	const editIncomeNotesId = 'edit-income-notes';
+	const editIncomeReasonId = 'edit-income-reason';
 </script>
 
 <div class="p-4 sm:p-6 max-w-7xl mx-auto">
@@ -371,25 +393,25 @@
 			<div class="grid grid-cols-1 md:grid-cols-2 gap-3 md:gap-4">
 				<div class="md:col-span-2 text-[10px] uppercase tracking-[0.14em] text-white/45">Core Transaction</div>
 				<div>
-					<label class="block text-white/60 text-xs uppercase tracking-wider mb-1.5">Jenis</label>
-					<select bind:value={formData.sub_type} class="w-full glass-input rounded-xl px-3 py-2 text-white text-sm">
+					<label for={incomeSubTypeId} class="block text-white/60 text-xs uppercase tracking-wider mb-1.5">Jenis</label>
+					<select id={incomeSubTypeId} bind:value={formData.sub_type} class="w-full glass-input rounded-xl px-3 py-2 text-white text-sm">
 						<option value="tithe">Persepuluhan</option>
 						<option value="offering">Persembahan</option>
 						<option value="other_income">Lainnya</option>
 					</select>
 				</div>
 				<div>
-					<label class="block text-white/60 text-xs uppercase tracking-wider mb-1.5">Tanggal</label>
-					<input type="date" bind:value={formData.txn_date} class="w-full glass-input rounded-xl px-3 py-2 text-white text-sm" />
+					<label for={incomeTxnDateId} class="block text-white/60 text-xs uppercase tracking-wider mb-1.5">Tanggal</label>
+					<input id={incomeTxnDateId} type="date" bind:value={formData.txn_date} class="w-full glass-input rounded-xl px-3 py-2 text-white text-sm" />
 				</div>
 				<div>
-					<label class="block text-white/60 text-xs uppercase tracking-wider mb-1.5">Nominal</label>
-					<input type="number" min="0" step="1000" bind:value={formData.amount} class="w-full glass-input rounded-xl px-3 py-2 text-white text-sm" />
+					<label for={incomeAmountId} class="block text-white/60 text-xs uppercase tracking-wider mb-1.5">Nominal</label>
+					<input id={incomeAmountId} type="number" min="0" step="1000" bind:value={formData.amount} class="w-full glass-input rounded-xl px-3 py-2 text-white text-sm" />
 				</div>
 
 				<div class="md:col-span-2 text-[10px] uppercase tracking-[0.14em] text-white/45 mt-1">Classification</div>
 				<div>
-					<label class="block text-white/60 text-xs uppercase tracking-wider mb-1.5">Kategori</label>
+					<label for={incomeCategoryId} class="block text-white/60 text-xs uppercase tracking-wider mb-1.5">Kategori</label>
 					{#if categoryLocked}
 						<div class="w-full glass-input rounded-xl px-3 py-2 text-white text-sm flex items-center justify-between">
 							<span>{mappedCategoryName(formData.sub_type) || '-'}</span>
@@ -397,7 +419,7 @@
 						</div>
 						<p class="text-[11px] text-white/45 mt-1">Auto dari jenis pemasukan.</p>
 					{:else}
-						<select bind:value={formData.category_id} class="w-full glass-input rounded-xl px-3 py-2 text-white text-sm">
+						<select id={incomeCategoryId} bind:value={formData.category_id} class="w-full glass-input rounded-xl px-3 py-2 text-white text-sm">
 							{#each categories as c}
 								<option value={String(c.id)}>{c.name}</option>
 							{/each}
@@ -405,7 +427,7 @@
 					{/if}
 				</div>
 				<div>
-					<label class="block text-white/60 text-xs uppercase tracking-wider mb-1.5">Tujuan Dana</label>
+					<label for={incomeServiceLabelId} class="block text-white/60 text-xs uppercase tracking-wider mb-1.5">Tujuan Dana</label>
 					{#if formData.sub_type === 'tithe'}
 						<div class="w-full glass-input rounded-xl px-3 py-2 text-white text-sm flex items-center justify-between">
 							<span>Storehouse / Conference</span>
@@ -413,20 +435,20 @@
 						</div>
 						<p class="text-[11px] text-white/45 mt-1">Tujuan tetap untuk persepuluhan.</p>
 					{:else if formData.sub_type === 'offering'}
-						<select bind:value={formData.service_label} class="w-full glass-input rounded-xl px-3 py-2 text-white text-sm">
+						<select id={incomeServiceLabelId} bind:value={formData.service_label} class="w-full glass-input rounded-xl px-3 py-2 text-white text-sm">
 							{#each offeringPlans as plan}
 								<option value={plan}>{plan}</option>
 							{/each}
 						</select>
 					{:else}
-						<input type="text" bind:value={formData.service_label} class="w-full glass-input rounded-xl px-3 py-2 text-white text-sm" placeholder="contoh: sumbangan acara khusus" />
+						<input id={incomeServiceLabelId} type="text" bind:value={formData.service_label} class="w-full glass-input rounded-xl px-3 py-2 text-white text-sm" placeholder="contoh: sumbangan acara khusus" />
 					{/if}
 				</div>
 
 				<div class="md:col-span-2 text-[10px] uppercase tracking-[0.14em] text-white/45 mt-1">Payment Routing</div>
 				<div>
-					<label class="block text-white/60 text-xs uppercase tracking-wider mb-1.5">Akun</label>
-					<select bind:value={formData.account_id} class="w-full glass-input rounded-xl px-3 py-2 text-white text-sm">
+					<label for={incomeAccountId} class="block text-white/60 text-xs uppercase tracking-wider mb-1.5">Akun</label>
+					<select id={incomeAccountId} bind:value={formData.account_id} class="w-full glass-input rounded-xl px-3 py-2 text-white text-sm">
 						<option value="">-</option>
 						{#each accounts as a}
 							<option value={String(a.id)}>{a.name}</option>
@@ -434,14 +456,14 @@
 					</select>
 				</div>
 				<div>
-					<label class="block text-white/60 text-xs uppercase tracking-wider mb-1.5">Metode</label>
-					<input type="text" bind:value={formData.payment_method} class="w-full glass-input rounded-xl px-3 py-2 text-white text-sm" placeholder="cash / transfer" />
+					<label for={incomeMethodId} class="block text-white/60 text-xs uppercase tracking-wider mb-1.5">Metode</label>
+					<input id={incomeMethodId} type="text" bind:value={formData.payment_method} class="w-full glass-input rounded-xl px-3 py-2 text-white text-sm" placeholder="cash / transfer" />
 				</div>
 
 				<div class="md:col-span-2 text-[10px] uppercase tracking-[0.14em] text-white/45 mt-1">Optional Details</div>
 				<div>
-					<label class="block text-white/60 text-xs uppercase tracking-wider mb-1.5">Pihak (opsional)</label>
-					<select bind:value={formData.party_id} class="w-full glass-input rounded-xl px-3 py-2 text-white text-sm">
+					<label for={incomePartyId} class="block text-white/60 text-xs uppercase tracking-wider mb-1.5">Pihak (opsional)</label>
+					<select id={incomePartyId} bind:value={formData.party_id} class="w-full glass-input rounded-xl px-3 py-2 text-white text-sm">
 						<option value="">-</option>
 						{#each parties as p}
 							<option value={String(p.id)}>{p.name}</option>
@@ -449,13 +471,13 @@
 					</select>
 				</div>
 				<div>
-					<label class="block text-white/60 text-xs uppercase tracking-wider mb-1.5">Ref (opsional)</label>
-					<input type="text" bind:value={formData.reference_no} class="w-full glass-input rounded-xl px-3 py-2 text-white text-sm" placeholder="opsional" />
+					<label for={incomeReferenceId} class="block text-white/60 text-xs uppercase tracking-wider mb-1.5">Ref (opsional)</label>
+					<input id={incomeReferenceId} type="text" bind:value={formData.reference_no} class="w-full glass-input rounded-xl px-3 py-2 text-white text-sm" placeholder="opsional" />
 				</div>
 			</div>
 			<div class="mt-3">
-				<label class="block text-white/60 text-xs uppercase tracking-wider mb-1.5">Catatan</label>
-				<input type="text" bind:value={formData.notes} class="w-full glass-input rounded-xl px-3 py-2 text-white text-sm" placeholder="opsional" />
+				<label for={incomeNotesId} class="block text-white/60 text-xs uppercase tracking-wider mb-1.5">Catatan</label>
+				<input id={incomeNotesId} type="text" bind:value={formData.notes} class="w-full glass-input rounded-xl px-3 py-2 text-white text-sm" placeholder="opsional" />
 			</div>
 			<div class="mt-4 flex justify-end gap-2">
 				<button type="button" onclick={() => { showForm = false; }} class="glass-button rounded-xl px-4 py-2 text-white/80 text-sm">Batal</button>
@@ -544,32 +566,32 @@
 
 				<div class="grid grid-cols-1 md:grid-cols-2 gap-3 md:gap-4">
 					<div>
-						<label class="block text-white/60 text-xs uppercase tracking-wider mb-1.5">Jenis</label>
-						<select bind:value={editForm.sub_type} disabled={editCoreLocked} onchange={() => { syncEditMappedCategory(); syncEditDestination(); }} class="w-full glass-input rounded-xl px-3 py-2 text-white text-sm disabled:opacity-60 disabled:cursor-not-allowed">
+						<label for={editIncomeSubTypeId} class="block text-white/60 text-xs uppercase tracking-wider mb-1.5">Jenis</label>
+						<select id={editIncomeSubTypeId} bind:value={editForm.sub_type} disabled={editCoreLocked} onchange={() => { syncEditMappedCategory(); syncEditDestination(); }} class="w-full glass-input rounded-xl px-3 py-2 text-white text-sm disabled:opacity-60 disabled:cursor-not-allowed">
 							<option value="tithe">Persepuluhan</option>
 							<option value="offering">Persembahan</option>
 							<option value="other_income">Lainnya</option>
 						</select>
 					</div>
 					<div>
-						<label class="block text-white/60 text-xs uppercase tracking-wider mb-1.5">Tanggal</label>
-						<input type="date" bind:value={editForm.txn_date} disabled={editCoreLocked} class="w-full glass-input rounded-xl px-3 py-2 text-white text-sm disabled:opacity-60 disabled:cursor-not-allowed" />
+						<label for={editIncomeTxnDateId} class="block text-white/60 text-xs uppercase tracking-wider mb-1.5">Tanggal</label>
+						<input id={editIncomeTxnDateId} type="date" bind:value={editForm.txn_date} disabled={editCoreLocked} class="w-full glass-input rounded-xl px-3 py-2 text-white text-sm disabled:opacity-60 disabled:cursor-not-allowed" />
 					</div>
 					<div>
-						<label class="block text-white/60 text-xs uppercase tracking-wider mb-1.5">Nominal</label>
-						<input type="number" min="0" step="1000" bind:value={editForm.amount} disabled={editCoreLocked} class="w-full glass-input rounded-xl px-3 py-2 text-white text-sm disabled:opacity-60 disabled:cursor-not-allowed" />
+						<label for={editIncomeAmountId} class="block text-white/60 text-xs uppercase tracking-wider mb-1.5">Nominal</label>
+						<input id={editIncomeAmountId} type="number" min="0" step="1000" bind:value={editForm.amount} disabled={editCoreLocked} class="w-full glass-input rounded-xl px-3 py-2 text-white text-sm disabled:opacity-60 disabled:cursor-not-allowed" />
 					</div>
 					<div>
-						<label class="block text-white/60 text-xs uppercase tracking-wider mb-1.5">Kategori</label>
-						<select bind:value={editForm.category_id} class="w-full glass-input rounded-xl px-3 py-2 text-white text-sm">
+						<label for={editIncomeCategoryId} class="block text-white/60 text-xs uppercase tracking-wider mb-1.5">Kategori</label>
+						<select id={editIncomeCategoryId} bind:value={editForm.category_id} class="w-full glass-input rounded-xl px-3 py-2 text-white text-sm">
 							{#each categories as c}
 								<option value={String(c.id)}>{c.name}</option>
 							{/each}
 						</select>
 					</div>
 					<div>
-						<label class="block text-white/60 text-xs uppercase tracking-wider mb-1.5">Akun</label>
-						<select bind:value={editForm.account_id} disabled={editCoreLocked} class="w-full glass-input rounded-xl px-3 py-2 text-white text-sm disabled:opacity-60 disabled:cursor-not-allowed">
+						<label for={editIncomeAccountId} class="block text-white/60 text-xs uppercase tracking-wider mb-1.5">Akun</label>
+						<select id={editIncomeAccountId} bind:value={editForm.account_id} disabled={editCoreLocked} class="w-full glass-input rounded-xl px-3 py-2 text-white text-sm disabled:opacity-60 disabled:cursor-not-allowed">
 							<option value="">-</option>
 							{#each accounts as a}
 								<option value={String(a.id)}>{a.name}</option>
@@ -580,16 +602,16 @@
 						{/if}
 					</div>
 					<div>
-						<label class="block text-white/60 text-xs uppercase tracking-wider mb-1.5">Metode</label>
-						<input type="text" bind:value={editForm.payment_method} class="w-full glass-input rounded-xl px-3 py-2 text-white text-sm" />
+						<label for={editIncomeMethodId} class="block text-white/60 text-xs uppercase tracking-wider mb-1.5">Metode</label>
+						<input id={editIncomeMethodId} type="text" bind:value={editForm.payment_method} class="w-full glass-input rounded-xl px-3 py-2 text-white text-sm" />
 					</div>
 					<div>
-						<label class="block text-white/60 text-xs uppercase tracking-wider mb-1.5">Tujuan Dana</label>
-						<input type="text" bind:value={editForm.service_label} class="w-full glass-input rounded-xl px-3 py-2 text-white text-sm" />
+						<label for={editIncomeServiceLabelId} class="block text-white/60 text-xs uppercase tracking-wider mb-1.5">Tujuan Dana</label>
+						<input id={editIncomeServiceLabelId} type="text" bind:value={editForm.service_label} class="w-full glass-input rounded-xl px-3 py-2 text-white text-sm" />
 					</div>
 					<div>
-						<label class="block text-white/60 text-xs uppercase tracking-wider mb-1.5">Pihak (opsional)</label>
-						<select bind:value={editForm.party_id} class="w-full glass-input rounded-xl px-3 py-2 text-white text-sm">
+						<label for={editIncomePartyId} class="block text-white/60 text-xs uppercase tracking-wider mb-1.5">Pihak (opsional)</label>
+						<select id={editIncomePartyId} bind:value={editForm.party_id} class="w-full glass-input rounded-xl px-3 py-2 text-white text-sm">
 							<option value="">-</option>
 							{#each parties as p}
 								<option value={String(p.id)}>{p.name}</option>
@@ -597,16 +619,16 @@
 						</select>
 					</div>
 					<div class="md:col-span-2">
-						<label class="block text-white/60 text-xs uppercase tracking-wider mb-1.5">Ref</label>
-						<input type="text" bind:value={editForm.reference_no} class="w-full glass-input rounded-xl px-3 py-2 text-white text-sm" />
+						<label for={editIncomeReferenceId} class="block text-white/60 text-xs uppercase tracking-wider mb-1.5">Ref</label>
+						<input id={editIncomeReferenceId} type="text" bind:value={editForm.reference_no} class="w-full glass-input rounded-xl px-3 py-2 text-white text-sm" />
 					</div>
 					<div class="md:col-span-2">
-						<label class="block text-white/60 text-xs uppercase tracking-wider mb-1.5">Catatan</label>
-						<input type="text" bind:value={editForm.notes} class="w-full glass-input rounded-xl px-3 py-2 text-white text-sm" />
+						<label for={editIncomeNotesId} class="block text-white/60 text-xs uppercase tracking-wider mb-1.5">Catatan</label>
+						<input id={editIncomeNotesId} type="text" bind:value={editForm.notes} class="w-full glass-input rounded-xl px-3 py-2 text-white text-sm" />
 					</div>
 					<div class="md:col-span-2">
-						<label class="block text-white/60 text-xs uppercase tracking-wider mb-1.5">Alasan Perubahan *</label>
-						<input type="text" bind:value={editForm.edit_reason} class="w-full glass-input rounded-xl px-3 py-2 text-white text-sm" placeholder="contoh: koreksi pihak & keterangan transaksi" />
+						<label for={editIncomeReasonId} class="block text-white/60 text-xs uppercase tracking-wider mb-1.5">Alasan Perubahan *</label>
+						<input id={editIncomeReasonId} type="text" bind:value={editForm.edit_reason} class="w-full glass-input rounded-xl px-3 py-2 text-white text-sm" placeholder="contoh: koreksi pihak & keterangan transaksi" />
 					</div>
 				</div>
 

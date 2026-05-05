@@ -191,6 +191,15 @@
 	$effect(() => {
 		loadData();
 	});
+
+	const expenseTxnDateId = 'expense-txn-date';
+	const expenseAmountId = 'expense-amount';
+	const expenseCategoryId = 'expense-category';
+	const expenseTargetId = 'expense-target';
+	const expenseAccountId = 'expense-account';
+	const expenseMethodId = 'expense-method';
+	const expensePartyId = 'expense-party';
+	const expenseNotesId = 'expense-notes';
 </script>
 
 <div class="p-4 sm:p-6 max-w-7xl mx-auto">
@@ -220,26 +229,26 @@
 				<div class="grid grid-cols-1 md:grid-cols-2 gap-3 md:gap-4">
 					<div class="md:col-span-2 text-[10px] uppercase tracking-[0.14em] text-white/45">Core Transaction</div>
 					<div>
-						<label class="block text-white/60 text-xs uppercase tracking-wider mb-1.5">Tanggal</label>
-						<input type="date" bind:value={formData.txn_date} class="w-full glass-input rounded-xl px-3 py-2 text-white text-sm" />
+						<label for={expenseTxnDateId} class="block text-white/60 text-xs uppercase tracking-wider mb-1.5">Tanggal</label>
+						<input id={expenseTxnDateId} type="date" bind:value={formData.txn_date} class="w-full glass-input rounded-xl px-3 py-2 text-white text-sm" />
 					</div>
 					<div>
-						<label class="block text-white/60 text-xs uppercase tracking-wider mb-1.5">Nominal</label>
-						<input type="number" min="0" step="1000" bind:value={formData.amount} class="w-full glass-input rounded-xl px-3 py-2 text-white text-sm" />
+						<label for={expenseAmountId} class="block text-white/60 text-xs uppercase tracking-wider mb-1.5">Nominal</label>
+						<input id={expenseAmountId} type="number" min="0" step="1000" bind:value={formData.amount} class="w-full glass-input rounded-xl px-3 py-2 text-white text-sm" />
 					</div>
 
 					<div class="md:col-span-2 text-[10px] uppercase tracking-[0.14em] text-white/45 mt-1">Classification</div>
 					<div>
-						<label class="block text-white/60 text-xs uppercase tracking-wider mb-1.5">Kategori</label>
-						<select bind:value={formData.category_id} class="w-full glass-input rounded-xl px-3 py-2 text-white text-sm">
+						<label for={expenseCategoryId} class="block text-white/60 text-xs uppercase tracking-wider mb-1.5">Kategori</label>
+						<select id={expenseCategoryId} bind:value={formData.category_id} class="w-full glass-input rounded-xl px-3 py-2 text-white text-sm">
 							{#each categories as c}
 								<option value={String(c.id)}>{c.name}</option>
 							{/each}
 						</select>
 					</div>
 					<div>
-						<label class="block text-white/60 text-xs uppercase tracking-wider mb-1.5">Tujuan Pengeluaran</label>
-						<select bind:value={formData.service_label} class="w-full glass-input rounded-xl px-3 py-2 text-white text-sm">
+						<label for={expenseTargetId} class="block text-white/60 text-xs uppercase tracking-wider mb-1.5">Tujuan Pengeluaran</label>
+						<select id={expenseTargetId} bind:value={formData.service_label} class="w-full glass-input rounded-xl px-3 py-2 text-white text-sm">
 							{#each expenseTargets as target}
 								<option value={target}>{target}</option>
 							{/each}
@@ -248,8 +257,8 @@
 
 					<div class="md:col-span-2 text-[10px] uppercase tracking-[0.14em] text-white/45 mt-1">Payment Routing</div>
 					<div>
-						<label class="block text-white/60 text-xs uppercase tracking-wider mb-1.5">Akun</label>
-						<select bind:value={formData.account_id} class="w-full glass-input rounded-xl px-3 py-2 text-white text-sm">
+						<label for={expenseAccountId} class="block text-white/60 text-xs uppercase tracking-wider mb-1.5">Akun</label>
+						<select id={expenseAccountId} bind:value={formData.account_id} class="w-full glass-input rounded-xl px-3 py-2 text-white text-sm">
 							<option value="">-</option>
 							{#each accounts as a}
 								<option value={String(a.id)}>{a.name}</option>
@@ -257,14 +266,14 @@
 						</select>
 					</div>
 					<div>
-						<label class="block text-white/60 text-xs uppercase tracking-wider mb-1.5">Metode</label>
-						<input type="text" bind:value={formData.payment_method} class="w-full glass-input rounded-xl px-3 py-2 text-white text-sm" placeholder="cash / transfer" />
+						<label for={expenseMethodId} class="block text-white/60 text-xs uppercase tracking-wider mb-1.5">Metode</label>
+						<input id={expenseMethodId} type="text" bind:value={formData.payment_method} class="w-full glass-input rounded-xl px-3 py-2 text-white text-sm" placeholder="cash / transfer" />
 					</div>
 
 					<div class="md:col-span-2 text-[10px] uppercase tracking-[0.14em] text-white/45 mt-1">Optional Details</div>
 					<div>
-						<label class="block text-white/60 text-xs uppercase tracking-wider mb-1.5">Pihak (opsional)</label>
-						<select bind:value={formData.party_id} class="w-full glass-input rounded-xl px-3 py-2 text-white text-sm">
+						<label for={expensePartyId} class="block text-white/60 text-xs uppercase tracking-wider mb-1.5">Pihak (opsional)</label>
+						<select id={expensePartyId} bind:value={formData.party_id} class="w-full glass-input rounded-xl px-3 py-2 text-white text-sm">
 							<option value="">-</option>
 							{#each parties as p}
 								<option value={String(p.id)}>{p.name}</option>
@@ -273,8 +282,8 @@
 					</div>
 				</div>
 			<div class="mt-3">
-				<label class="block text-white/60 text-xs uppercase tracking-wider mb-1.5">Catatan</label>
-				<input type="text" bind:value={formData.notes} class="w-full glass-input rounded-xl px-3 py-2 text-white text-sm" placeholder="opsional" />
+				<label for={expenseNotesId} class="block text-white/60 text-xs uppercase tracking-wider mb-1.5">Catatan</label>
+				<input id={expenseNotesId} type="text" bind:value={formData.notes} class="w-full glass-input rounded-xl px-3 py-2 text-white text-sm" placeholder="opsional" />
 			</div>
 			<div class="mt-3 flex items-center gap-2">
 				<input id="is-draft" type="checkbox" bind:checked={formData.is_draft} class="accent-emerald-400" />

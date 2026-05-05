@@ -18,16 +18,20 @@
 		onCancel: () => void;
 	} = $props();
 
-	let formData = $state({
-		name: recipient?.name || '',
-		bank_name: recipient?.bank_name || '',
-		account_number: recipient?.account_number || '',
-		whatsapp: recipient?.whatsapp || '',
-		keterangan: recipient?.keterangan || '',
-		transfer_to_id: recipient?.transfer_to_id || 0,
-		zoom_eligible: recipient?.zoom_eligible ?? 1,
-		family_group_id: recipient?.family_group_id ?? null as number | null
-	});
+	function createFormData(currentRecipient?: Recipient) {
+		return {
+			name: currentRecipient?.name || '',
+			bank_name: currentRecipient?.bank_name || '',
+			account_number: currentRecipient?.account_number || '',
+			whatsapp: currentRecipient?.whatsapp || '',
+			keterangan: currentRecipient?.keterangan || '',
+			transfer_to_id: currentRecipient?.transfer_to_id || 0,
+			zoom_eligible: currentRecipient?.zoom_eligible ?? 1,
+			family_group_id: currentRecipient?.family_group_id ?? null as number | null
+		};
+	}
+
+	let formData = $state(createFormData());
 
 	// Get unique family groups from recipients
 	let familyGroups = $derived(() => {
@@ -51,6 +55,21 @@
 
 	let errors = $state<Record<string, string>>({});
 	let touched = $state<Record<string, boolean>>({});
+
+	$effect(() => {
+		formData = createFormData(recipient);
+		touched = {};
+		errors = {};
+	});
+
+	const recipientNameId = 'recipient-name';
+	const recipientBankId = 'recipient-bank';
+	const recipientAccountId = 'recipient-account';
+	const recipientWhatsappId = 'recipient-whatsapp';
+	const recipientKeteranganId = 'recipient-keterangan';
+	const recipientTransferToId = 'recipient-transfer-to';
+	const recipientZoomEligibleId = 'recipient-zoom-eligible';
+	const recipientFamilyId = 'recipient-family';
 
 	function validate(): boolean {
 		errors = {};
@@ -87,8 +106,9 @@
 <form onsubmit={(e) => { e.preventDefault(); handleSubmit(); }} class="space-y-4">
 	<div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
 		<div>
-			<label class="block text-white/70 text-xs uppercase tracking-wider mb-1.5">Nama *</label>
+			<label for={recipientNameId} class="block text-white/70 text-xs uppercase tracking-wider mb-1.5">Nama *</label>
 			<input
+				id={recipientNameId}
 				type="text"
 				bind:value={formData.name}
 				class={fieldClass('name')}
@@ -104,8 +124,9 @@
 			{/if}
 		</div>
 		<div>
-			<label class="block text-white/70 text-xs uppercase tracking-wider mb-1.5">Bank</label>
+			<label for={recipientBankId} class="block text-white/70 text-xs uppercase tracking-wider mb-1.5">Bank</label>
 			<select
+				id={recipientBankId}
 				bind:value={formData.bank_name}
 				class="w-full glass-input rounded-xl px-4 py-2.5 text-white text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/30 bg-transparent"
 			>
@@ -119,8 +140,9 @@
 			</select>
 		</div>
 		<div>
-			<label class="block text-white/70 text-xs uppercase tracking-wider mb-1.5">No. Rekening / No. HP</label>
+			<label for={recipientAccountId} class="block text-white/70 text-xs uppercase tracking-wider mb-1.5">No. Rekening / No. HP</label>
 			<input
+				id={recipientAccountId}
 				type="text"
 				bind:value={formData.account_number}
 				class={fieldClass('account_number')}
@@ -135,8 +157,9 @@
 			{/if}
 		</div>
 		<div>
-			<label class="block text-white/70 text-xs uppercase tracking-wider mb-1.5">WhatsApp</label>
+			<label for={recipientWhatsappId} class="block text-white/70 text-xs uppercase tracking-wider mb-1.5">WhatsApp</label>
 			<input
+				id={recipientWhatsappId}
 				type="text"
 				bind:value={formData.whatsapp}
 				class={fieldClass('whatsapp')}
@@ -151,8 +174,9 @@
 			{/if}
 		</div>
 		<div>
-			<label class="block text-white/70 text-xs uppercase tracking-wider mb-1.5">Keterangan</label>
+			<label for={recipientKeteranganId} class="block text-white/70 text-xs uppercase tracking-wider mb-1.5">Keterangan</label>
 			<input
+				id={recipientKeteranganId}
 				type="text"
 				bind:value={formData.keterangan}
 				class="w-full glass-input rounded-xl px-4 py-2.5 text-white text-sm placeholder-white/30 focus:outline-none focus:ring-2 focus:ring-emerald-500/30"
@@ -160,8 +184,9 @@
 			/>
 		</div>
 		<div>
-			<label class="block text-white/70 text-xs uppercase tracking-wider mb-1.5">Transfer ke</label>
+			<label for={recipientTransferToId} class="block text-white/70 text-xs uppercase tracking-wider mb-1.5">Transfer ke</label>
 			<select
+				id={recipientTransferToId}
 				bind:value={formData.transfer_to_id}
 				class="w-full glass-input rounded-xl px-4 py-2.5 text-white text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/30 bg-transparent"
 			>
@@ -179,8 +204,9 @@
 		<div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
 			<!-- Zoom Eligible Toggle -->
 			<div>
-				<label class="block text-white/70 text-xs uppercase tracking-wider mb-1.5">Zoom Eligible</label>
+				<label for={recipientZoomEligibleId} class="block text-white/70 text-xs uppercase tracking-wider mb-1.5">Zoom Eligible</label>
 				<button
+					id={recipientZoomEligibleId}
 					type="button"
 					onclick={() => { formData.zoom_eligible = formData.zoom_eligible ? 0 : 1; }}
 					class="w-full flex items-center gap-3 rounded-xl px-4 py-2.5 transition-all {formData.zoom_eligible ? 'glass-input border border-violet-500/30 bg-violet-500/10' : 'glass-input border border-white/10 opacity-60'}"
@@ -197,8 +223,9 @@
 
 			<!-- Family Group -->
 			<div>
-				<label class="block text-white/70 text-xs uppercase tracking-wider mb-1.5">Keluarga</label>
+				<label for={recipientFamilyId} class="block text-white/70 text-xs uppercase tracking-wider mb-1.5">Keluarga</label>
 				<select
+					id={recipientFamilyId}
 					bind:value={formData.family_group_id}
 					class="w-full glass-input rounded-xl px-4 py-2.5 text-white text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/30 bg-transparent"
 				>

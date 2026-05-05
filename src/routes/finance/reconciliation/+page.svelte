@@ -471,6 +471,10 @@
 	$effect(() => {
 		if (selectedImportId) loadLines();
 	});
+
+	const createTxnTypeId = 'reconciliation-create-type';
+	const createTxnCategoryId = 'reconciliation-create-category';
+	const createTxnServiceLabelId = 'reconciliation-create-service-label';
 </script>
 
 <div class="p-4 sm:p-6 max-w-7xl mx-auto">
@@ -715,9 +719,9 @@
 
 				<div class="grid grid-cols-1 md:grid-cols-2 gap-3">
 					<div>
-						<label class="block text-white/60 text-xs uppercase tracking-wider mb-1.5">Jenis</label>
+						<label for={createTxnTypeId} class="block text-white/60 text-xs uppercase tracking-wider mb-1.5">Jenis</label>
 						{#if createTargetLine.signed_amount >= 0}
-							<select bind:value={createForm.sub_type} onchange={onCreateSubTypeChange} class="w-full glass-input rounded-xl px-3 py-2 text-white text-sm">
+							<select id={createTxnTypeId} bind:value={createForm.sub_type} onchange={onCreateSubTypeChange} class="w-full glass-input rounded-xl px-3 py-2 text-white text-sm">
 								<option value="tithe">Persepuluhan</option>
 								<option value="offering">Persembahan</option>
 								<option value="other_income">Lainnya</option>
@@ -727,8 +731,8 @@
 						{/if}
 					</div>
 					<div>
-						<label class="block text-white/60 text-xs uppercase tracking-wider mb-1.5">Kategori</label>
-						<select bind:value={createForm.category_id} class="w-full glass-input rounded-xl px-3 py-2 text-white text-sm">
+						<label for={createTxnCategoryId} class="block text-white/60 text-xs uppercase tracking-wider mb-1.5">Kategori</label>
+						<select id={createTxnCategoryId} bind:value={createForm.category_id} class="w-full glass-input rounded-xl px-3 py-2 text-white text-sm">
 							<option value="">Pilih kategori...</option>
 							{#each activeCreateCategories() as category}
 								<option value={String(category.id)}>{category.name}</option>
@@ -736,8 +740,8 @@
 						</select>
 					</div>
 					<div class="md:col-span-2">
-						<label class="block text-white/60 text-xs uppercase tracking-wider mb-1.5">Tujuan Dana / Service Label</label>
-						<input type="text" bind:value={createForm.service_label} class="w-full glass-input rounded-xl px-3 py-2 text-white text-sm" placeholder="opsional" />
+						<label for={createTxnServiceLabelId} class="block text-white/60 text-xs uppercase tracking-wider mb-1.5">Tujuan Dana / Service Label</label>
+						<input id={createTxnServiceLabelId} type="text" bind:value={createForm.service_label} class="w-full glass-input rounded-xl px-3 py-2 text-white text-sm" placeholder="opsional" />
 					</div>
 				</div>
 

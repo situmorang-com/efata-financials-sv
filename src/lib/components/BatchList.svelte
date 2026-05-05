@@ -190,6 +190,16 @@
 	$effect(() => {
 		loadBatches();
 	});
+
+	const monthlyMonthId = 'monthly-batch-month';
+	const monthlyYearId = 'monthly-batch-year';
+	const monthlyTotalSaturdaysId = 'monthly-total-saturdays';
+	const monthlyTransportRateId = 'monthly-transport-rate';
+	const monthlyZoomSingleRateId = 'monthly-zoom-single-rate';
+	const monthlyZoomFamilyRateId = 'monthly-zoom-family-rate';
+	const specialNameId = 'special-batch-name';
+	const specialAmountId = 'special-batch-amount';
+	const specialDescriptionId = 'special-batch-description';
 </script>
 
 <div class="p-4 sm:p-6 max-w-7xl mx-auto">
@@ -281,8 +291,9 @@
 						<!-- Basic Info — single row on desktop -->
 						<div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
 							<div>
-								<label class="block text-white/70 text-xs uppercase tracking-wider mb-1.5">Bulan</label>
+								<label for={monthlyMonthId} class="block text-white/70 text-xs uppercase tracking-wider mb-1.5">Bulan</label>
 								<select
+									id={monthlyMonthId}
 									bind:value={selectedMonth}
 									class="w-full glass-input rounded-xl px-4 py-2.5 text-white text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/30"
 								>
@@ -292,8 +303,9 @@
 								</select>
 							</div>
 							<div>
-								<label class="block text-white/70 text-xs uppercase tracking-wider mb-1.5">Tahun</label>
+								<label for={monthlyYearId} class="block text-white/70 text-xs uppercase tracking-wider mb-1.5">Tahun</label>
 								<select
+									id={monthlyYearId}
 									bind:value={selectedYear}
 									class="w-full glass-input rounded-xl px-4 py-2.5 text-white text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/30"
 								>
@@ -307,10 +319,11 @@
 						<!-- Config — all 4 fields in one row on desktop -->
 						<div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
 							<div>
-								<label class="block text-white/50 text-xs mb-1">
+								<label for={monthlyTotalSaturdaysId} class="block text-white/50 text-xs mb-1">
 									<span class="text-emerald-400">●</span> Jumlah Sabat
 								</label>
 								<input
+									id={monthlyTotalSaturdaysId}
 									type="number"
 									bind:value={formData.total_saturdays}
 									min="1"
@@ -319,10 +332,11 @@
 								/>
 							</div>
 							<div>
-								<label class="block text-white/50 text-xs mb-1">
+								<label for={monthlyTransportRateId} class="block text-white/50 text-xs mb-1">
 									<span class="text-emerald-400">●</span> Rate/Sabat
 								</label>
 								<input
+									id={monthlyTransportRateId}
 									type="text"
 									inputmode="numeric"
 									value={formatCurrencyInput(formData.transport_rate)}
@@ -336,10 +350,11 @@
 								/>
 							</div>
 							<div>
-								<label class="block text-white/50 text-xs mb-1">
+								<label for={monthlyZoomSingleRateId} class="block text-white/50 text-xs mb-1">
 									<span class="text-violet-400">●</span> Zoom Sendiri
 								</label>
 								<input
+									id={monthlyZoomSingleRateId}
 									type="text"
 									inputmode="numeric"
 									value={formatCurrencyInput(formData.zoom_single_rate)}
@@ -353,10 +368,11 @@
 								/>
 							</div>
 							<div>
-								<label class="block text-white/50 text-xs mb-1">
+								<label for={monthlyZoomFamilyRateId} class="block text-white/50 text-xs mb-1">
 									<span class="text-amber-400">●</span> Zoom Keluarga
 								</label>
 								<input
+									id={monthlyZoomFamilyRateId}
 									type="text"
 									inputmode="numeric"
 									value={formatCurrencyInput(formData.zoom_family_rate)}
@@ -379,8 +395,9 @@
 					{:else}
 						<div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
 							<div>
-								<label class="block text-white/70 text-xs uppercase tracking-wider mb-1.5">Nama Batch</label>
+								<label for={specialNameId} class="block text-white/70 text-xs uppercase tracking-wider mb-1.5">Nama Batch</label>
 								<input
+									id={specialNameId}
 									type="text"
 									bind:value={specialFormData.name}
 									placeholder="Contoh: Bonus Pelayanan Maret 2026"
@@ -388,8 +405,9 @@
 								/>
 							</div>
 							<div>
-								<label class="block text-white/70 text-xs uppercase tracking-wider mb-1.5">Nominal Per Orang</label>
+								<label for={specialAmountId} class="block text-white/70 text-xs uppercase tracking-wider mb-1.5">Nominal Per Orang</label>
 								<input
+									id={specialAmountId}
 									type="text"
 									inputmode="numeric"
 									value={formatCurrencyInput(specialFormData.amount)}
@@ -404,8 +422,9 @@
 							</div>
 						</div>
 						<div>
-							<label class="block text-white/70 text-xs uppercase tracking-wider mb-1.5">Deskripsi</label>
+							<label for={specialDescriptionId} class="block text-white/70 text-xs uppercase tracking-wider mb-1.5">Deskripsi</label>
 							<input
+								id={specialDescriptionId}
 								type="text"
 								bind:value={specialFormData.description}
 								placeholder="Keterangan batch spesial"

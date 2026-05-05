@@ -155,6 +155,15 @@
 	$effect(() => {
 		loadAccounts();
 	});
+
+	const accountsSearchId = 'accounts-search';
+	const accountsTypeFilterId = 'accounts-type-filter';
+	const accountNameId = 'account-name';
+	const accountTypeId = 'account-type';
+	const accountBankId = 'account-bank';
+	const accountNumberId = 'account-number';
+	const accountHolderId = 'account-holder';
+	const accountOpeningBalanceId = 'account-opening-balance';
 </script>
 
 <div class="p-4 sm:p-6 max-w-7xl mx-auto">
@@ -181,12 +190,12 @@
 	<div class="glass-card rounded-3xl p-4 mb-5 fade-up">
 		<div class="grid grid-cols-1 md:grid-cols-3 gap-3">
 			<div>
-				<label class="block text-white/60 text-xs uppercase tracking-wider mb-1.5">Cari</label>
-				<input bind:value={search} type="text" placeholder="Nama akun / bank / rekening / holder" class="w-full glass-input rounded-xl px-3 py-2.5 text-white text-sm" />
+				<label for={accountsSearchId} class="block text-white/60 text-xs uppercase tracking-wider mb-1.5">Cari</label>
+				<input id={accountsSearchId} bind:value={search} type="text" placeholder="Nama akun / bank / rekening / holder" class="w-full glass-input rounded-xl px-3 py-2.5 text-white text-sm" />
 			</div>
 			<div>
-				<label class="block text-white/60 text-xs uppercase tracking-wider mb-1.5">Tipe</label>
-				<select bind:value={filterType} class="w-full glass-input rounded-xl px-3 py-2.5 text-white text-sm">
+				<label for={accountsTypeFilterId} class="block text-white/60 text-xs uppercase tracking-wider mb-1.5">Tipe</label>
+				<select id={accountsTypeFilterId} bind:value={filterType} class="w-full glass-input rounded-xl px-3 py-2.5 text-white text-sm">
 					<option value="all">Semua Tipe</option>
 					<option value="bank">Bank</option>
 					<option value="cash">Cash</option>
@@ -273,8 +282,8 @@
 </div>
 
 {#if showModal}
-	<div class="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4" onclick={closeModal}>
-		<div class="glass-card rounded-3xl p-5 w-full max-w-2xl shadow-2xl" onclick={(e) => e.stopPropagation()}>
+	<div class="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4" onclick={closeModal} onkeydown={(e) => { if (e.key === 'Escape' || e.key === 'Enter' || e.key === ' ') closeModal(); }} role="button" tabindex="0" aria-label="Tutup dialog akun">
+		<div class="glass-card rounded-3xl p-5 w-full max-w-2xl shadow-2xl" onclick={(e) => e.stopPropagation()} onkeydown={(e) => e.stopPropagation()} role="presentation" tabindex="-1">
 			<div class="flex items-start justify-between gap-3 mb-5">
 				<div>
 					<h3 class="text-white font-semibold brand-font text-lg">{editingId ? 'Edit Akun' : 'Tambah Akun'}</h3>
@@ -287,12 +296,12 @@
 
 			<div class="grid grid-cols-1 md:grid-cols-2 gap-3 md:gap-4">
 				<div>
-					<label class="block text-white/60 text-xs uppercase tracking-wider mb-1.5">Nama Akun</label>
-					<input bind:value={formData.name} type="text" class="w-full glass-input rounded-xl px-3 py-2.5 text-white text-sm" placeholder="Contoh: BCA Operasional" />
+					<label for={accountNameId} class="block text-white/60 text-xs uppercase tracking-wider mb-1.5">Nama Akun</label>
+					<input id={accountNameId} bind:value={formData.name} type="text" class="w-full glass-input rounded-xl px-3 py-2.5 text-white text-sm" placeholder="Contoh: BCA Operasional" />
 				</div>
 				<div>
-					<label class="block text-white/60 text-xs uppercase tracking-wider mb-1.5">Tipe</label>
-					<select bind:value={formData.account_type} class="w-full glass-input rounded-xl px-3 py-2.5 text-white text-sm">
+					<label for={accountTypeId} class="block text-white/60 text-xs uppercase tracking-wider mb-1.5">Tipe</label>
+					<select id={accountTypeId} bind:value={formData.account_type} class="w-full glass-input rounded-xl px-3 py-2.5 text-white text-sm">
 						<option value="bank">Bank</option>
 						<option value="cash">Cash</option>
 						<option value="ewallet">E-Wallet</option>
@@ -300,20 +309,20 @@
 					</select>
 				</div>
 				<div>
-					<label class="block text-white/60 text-xs uppercase tracking-wider mb-1.5">Nama Bank / Provider</label>
-					<input bind:value={formData.bank_name} type="text" class="w-full glass-input rounded-xl px-3 py-2.5 text-white text-sm" placeholder="Contoh: BCA" />
+					<label for={accountBankId} class="block text-white/60 text-xs uppercase tracking-wider mb-1.5">Nama Bank / Provider</label>
+					<input id={accountBankId} bind:value={formData.bank_name} type="text" class="w-full glass-input rounded-xl px-3 py-2.5 text-white text-sm" placeholder="Contoh: BCA" />
 				</div>
 				<div>
-					<label class="block text-white/60 text-xs uppercase tracking-wider mb-1.5">Nomor Rekening</label>
-					<input bind:value={formData.account_number} type="text" class="w-full glass-input rounded-xl px-3 py-2.5 text-white text-sm" placeholder="Contoh: 1240011627966" />
+					<label for={accountNumberId} class="block text-white/60 text-xs uppercase tracking-wider mb-1.5">Nomor Rekening</label>
+					<input id={accountNumberId} bind:value={formData.account_number} type="text" class="w-full glass-input rounded-xl px-3 py-2.5 text-white text-sm" placeholder="Contoh: 1240011627966" />
 				</div>
 				<div>
-					<label class="block text-white/60 text-xs uppercase tracking-wider mb-1.5">Atas Nama</label>
-					<input bind:value={formData.holder_name} type="text" class="w-full glass-input rounded-xl px-3 py-2.5 text-white text-sm" placeholder="Opsional" />
+					<label for={accountHolderId} class="block text-white/60 text-xs uppercase tracking-wider mb-1.5">Atas Nama</label>
+					<input id={accountHolderId} bind:value={formData.holder_name} type="text" class="w-full glass-input rounded-xl px-3 py-2.5 text-white text-sm" placeholder="Opsional" />
 				</div>
 				<div>
-					<label class="block text-white/60 text-xs uppercase tracking-wider mb-1.5">Opening Balance</label>
-					<input bind:value={formData.opening_balance} type="number" min="0" step="1000" class="w-full glass-input rounded-xl px-3 py-2.5 text-white text-sm" />
+					<label for={accountOpeningBalanceId} class="block text-white/60 text-xs uppercase tracking-wider mb-1.5">Opening Balance</label>
+					<input id={accountOpeningBalanceId} bind:value={formData.opening_balance} type="number" min="0" step="1000" class="w-full glass-input rounded-xl px-3 py-2.5 text-white text-sm" />
 				</div>
 			</div>
 
