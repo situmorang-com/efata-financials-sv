@@ -1350,10 +1350,12 @@
 												type="button"
 												disabled={!isEditMode}
 												onclick={() => toggleCashPaid(item)}
+												title={!isEditMode ? 'Aktifkan Edit untuk mengubah status' : undefined}
 												class="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium transition-all
 													{item.transfer_status === 'done'
 														? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 hover:bg-emerald-500/30'
-														: 'bg-white/5 text-white/50 border border-white/15 hover:border-white/30'}"
+														: 'bg-amber-500/15 text-amber-300 border border-amber-500/30 hover:bg-amber-500/25'}
+													{!isEditMode ? 'opacity-60 cursor-not-allowed' : ''}"
 											>
 												<Banknote class="w-3.5 h-3.5" />
 												{item.transfer_status === 'done' ? 'Cash' : 'Bayar'}
@@ -1555,10 +1557,12 @@
 										type="button"
 										disabled={!isEditMode}
 										onclick={() => toggleCashPaid(item)}
+										title={!isEditMode ? 'Aktifkan Edit untuk mengubah status' : undefined}
 										class="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium transition-all
 											{item.transfer_status === 'done'
 												? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 hover:bg-emerald-500/30'
-												: 'bg-white/5 text-white/50 border border-white/15 hover:border-white/30'}"
+												: 'bg-amber-500/15 text-amber-300 border border-amber-500/30 hover:bg-amber-500/25'}
+											{!isEditMode ? 'opacity-60 cursor-not-allowed' : ''}"
 									>
 										<Banknote class="w-3.5 h-3.5" />
 										{item.transfer_status === 'done' ? 'Cash' : 'Bayar'}
