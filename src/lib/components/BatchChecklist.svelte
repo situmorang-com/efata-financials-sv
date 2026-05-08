@@ -44,6 +44,7 @@
 	let familyTransferFeeInput = $state('0');
 	let familyTransferFile = $state<File | null>(null);
 	let familyTransferSubmitting = $state(false);
+	let selectedSourceBank = $state<'mandiri' | 'bca'>('mandiri');
 
 	type FamilyTransferGroup = {
 		key: string;
@@ -152,6 +153,30 @@
 		const normalizedPhone = normalizeDanaPhoneNumber(accountNumber);
 		if (!normalizedPhone) return null;
 		return `89508${normalizedPhone}`;
+	}
+
+	function getDanaFormattedAccount(bankName?: string | null, accountNumber?: string | null, sourceBank?: 'mandiri' | 'bca'): string | null {
+		if (!isDanaAccount(bankName)) return null;
+		const normalizedPhone = normalizeDanaPhoneNumber(accountNumber);
+		if (!normalizedPhone) return null;
+		const code = sourceBank === 'bca' ? '3901' : '89508';
+		return `${code}${normalizedPhone}`;
+	}
+
+	function getTransferFee(sourceBank: 'mandiri' | 'bca', destBankName?: string | null): number {
+		const destBank = normalizeKeyPart(destBankName);
+		if (isDanaAccount(destBank)) return 1000;
+		if (sourceBank === 'mandiri' && destBank === 'mandiri') return 0;
+		if (sourceBank === 'bca' && destBank === 'bca') return 0;
+		return 2500;
+	}
+
+	function updateDefaultFeesForBank(bank: 'mandiri' | 'bca') {
+		for (const item of items) {
+			if (isCash(item)) continue;
+			const destBank = item.actual_bank_name || item.bank_name;
+			item.transfer_fee = getTransferFee(bank, destBank);
+		}
 	}
 
 	async function copyDanaAccount(bankName?: string | null, accountNumber?: string | null) {
@@ -894,6 +919,11 @@
 	$effect(() => {
 		loadData();
 	});
+
+	$effect(() => {
+		selectedSourceBank;
+		updateDefaultFeesForBank(selectedSourceBank);
+	});
 </script>
 
 <div class="p-4 sm:p-6 max-w-7xl mx-auto">
@@ -1103,14 +1133,23 @@
 						</button>
 					</div>
 				</div>
-				<div class="relative w-full lg:w-72">
-					<Search class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-white/30" />
-					<input
-						type="text"
-						bind:value={searchQuery}
-						placeholder="Cari nama atau bank..."
-						class="glass-input rounded-full pl-9 pr-4 py-2 text-white text-sm placeholder-white/30 w-full focus:outline-none focus:ring-2 focus:ring-white/20"
-					/>
+				<div class="flex items-center gap-2 w-full lg:w-auto">
+					<select
+						bind:value={selectedSourceBank}
+						class="glass-input rounded-full px-3 py-2 text-white text-sm bg-white/10 border border-white/20 focus:outline-none focus:ring-2 focus:ring-white/20"
+					>
+						<option value="mandiri">Mandiri</option>
+						<option value="bca">BCA</option>
+					</select>
+					<div class="relative flex-1 lg:w-72">
+						<Search class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-white/30" />
+						<input
+							type="text"
+							bind:value={searchQuery}
+							placeholder="Cari nama atau bank..."
+							class="glass-input rounded-full pl-9 pr-4 py-2 text-white text-sm placeholder-white/30 w-full focus:outline-none focus:ring-2 focus:ring-white/20"
+						/>
+					</div>
 				</div>
 			</div>
 		</div>
@@ -1214,9 +1253,20 @@
 													<button
 														type="button"
 														class="font-mono text-inherit bg-transparent border-0 p-0 m-0 cursor-copy"
-														title="Double click untuk copy format transfer DANA"
-														ondblclick={() => copyDanaAccount(item.actual_bank_name, item.actual_account_number)}
-													>{item.actual_account_number}</button>
+														title="Double click untuk copy format transfer {selectedSourceBank.toUpperCase()}"
+														ondblclick={async () => {
+															const account = getDanaFormattedAccount(item.actual_bank_name, item.actual_account_number, selectedSourceBank);
+															if (account) {
+																try {
+																	await navigator.clipboard.writeText(account);
+																	addToast(`Tersalin: ${account}`, 'success');
+																} catch (error) {
+																	console.error('Failed to copy:', error);
+																	addToast('Gagal menyalin nomor', 'error');
+																}
+															}
+														}}
+													>{getDanaFormattedAccount(item.actual_bank_name, item.actual_account_number, selectedSourceBank)}</button>
 												{:else}
 													<span class="font-mono">{item.actual_account_number}</span>
 												{/if}
@@ -1228,9 +1278,20 @@
 													<button
 														type="button"
 														class="font-mono text-inherit bg-transparent border-0 p-0 m-0 cursor-copy"
-														title="Double click untuk copy format transfer DANA"
-														ondblclick={() => copyDanaAccount(item.bank_name, item.account_number)}
-													>{item.account_number}</button>
+														title="Double click untuk copy format transfer {selectedSourceBank.toUpperCase()}"
+														ondblclick={async () => {
+															const account = getDanaFormattedAccount(item.bank_name, item.account_number, selectedSourceBank);
+															if (account) {
+																try {
+																	await navigator.clipboard.writeText(account);
+																	addToast(`Tersalin: ${account}`, 'success');
+																} catch (error) {
+																	console.error('Failed to copy:', error);
+																	addToast('Gagal menyalin nomor', 'error');
+																}
+															}
+														}}
+													>{getDanaFormattedAccount(item.bank_name, item.account_number, selectedSourceBank)}</button>
 												{:else}
 													<span class="font-mono">{item.account_number}</span>
 												{/if}
@@ -1422,9 +1483,20 @@
 												<button
 													type="button"
 													class="font-mono text-inherit bg-transparent border-0 p-0 m-0 cursor-copy"
-													title="Double click untuk copy format transfer DANA"
-													ondblclick={() => copyDanaAccount(item.actual_bank_name, item.actual_account_number)}
-												>{item.actual_account_number}</button>
+													title="Double click untuk copy format transfer {selectedSourceBank.toUpperCase()}"
+													ondblclick={async () => {
+														const account = getDanaFormattedAccount(item.actual_bank_name, item.actual_account_number, selectedSourceBank);
+														if (account) {
+															try {
+																await navigator.clipboard.writeText(account);
+																addToast(`Tersalin: ${account}`, 'success');
+															} catch (error) {
+																console.error('Failed to copy:', error);
+																addToast('Gagal menyalin nomor', 'error');
+															}
+														}
+													}}
+												>{getDanaFormattedAccount(item.actual_bank_name, item.actual_account_number, selectedSourceBank)}</button>
 											{:else}
 												<span class="font-mono">{item.actual_account_number}</span>
 											{/if}
@@ -1436,9 +1508,20 @@
 												<button
 													type="button"
 													class="font-mono text-inherit bg-transparent border-0 p-0 m-0 cursor-copy"
-													title="Double click untuk copy format transfer DANA"
-													ondblclick={() => copyDanaAccount(item.bank_name, item.account_number)}
-												>{item.account_number}</button>
+													title="Double click untuk copy format transfer {selectedSourceBank.toUpperCase()}"
+													ondblclick={async () => {
+														const account = getDanaFormattedAccount(item.bank_name, item.account_number, selectedSourceBank);
+														if (account) {
+															try {
+																await navigator.clipboard.writeText(account);
+																addToast(`Tersalin: ${account}`, 'success');
+															} catch (error) {
+																console.error('Failed to copy:', error);
+																addToast('Gagal menyalin nomor', 'error');
+															}
+														}
+													}}
+												>{getDanaFormattedAccount(item.bank_name, item.account_number, selectedSourceBank)}</button>
 											{:else}
 												<span class="font-mono">{item.account_number}</span>
 											{/if}
