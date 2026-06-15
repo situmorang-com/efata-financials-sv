@@ -165,12 +165,15 @@
 		return 2500;
 	}
 
+	// NOTE: this runs inside an $effect, so it must not reassign `items`
+	// (a new array reference re-triggers the effect → infinite loop). Mutate
+	// transfer_fee in place — the effect never reads that field, so no loop.
 	function updateDefaultFeesForBank(bank: 'mandiri' | 'bca') {
-		items = items.map((item) =>
-			isCash(item)
-				? item
-				: { ...item, transfer_fee: getTransferFee(bank, item.actual_bank_name || item.bank_name) }
-		);
+		for (const item of items) {
+			if (isCash(item)) continue;
+			const destBank = item.actual_bank_name || item.bank_name;
+			item.transfer_fee = getTransferFee(bank, destBank);
+		}
 	}
 
 	async function copyDanaAccount(bankName?: string | null, accountNumber?: string | null) {
