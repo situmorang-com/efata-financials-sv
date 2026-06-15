@@ -38,12 +38,6 @@
 	let downloading = $state(false);
 	let isEditMode = $state(false);
 	let isSpecial = $derived(batch?.type === 'special');
-	let viewMode = $state<'individual' | 'family'>('family');
-	let selectedFamilyGroupKey = $state<string | null>(null);
-	let familyTransferDate = $state(new Date().toISOString().slice(0, 10));
-	let familyTransferFeeInput = $state('0');
-	let familyTransferFile = $state<File | null>(null);
-	let familyTransferSubmitting = $state(false);
 	let selectedSourceBank = $state<'mandiri' | 'bca'>('mandiri');
 
 	type FamilyTransferGroup = {
@@ -172,11 +166,11 @@
 	}
 
 	function updateDefaultFeesForBank(bank: 'mandiri' | 'bca') {
-		for (const item of items) {
-			if (isCash(item)) continue;
-			const destBank = item.actual_bank_name || item.bank_name;
-			item.transfer_fee = getTransferFee(bank, destBank);
-		}
+		items = items.map((item) =>
+			isCash(item)
+				? item
+				: { ...item, transfer_fee: getTransferFee(bank, item.actual_bank_name || item.bank_name) }
+		);
 	}
 
 	async function copyDanaAccount(bankName?: string | null, accountNumber?: string | null) {
@@ -265,26 +259,6 @@
 		})
 	);
 	let familyTransferGroups = $derived(buildFamilyTransferGroups(items));
-	let visibleFamilyTransferGroups = $derived(
-		familyTransferGroups.filter(group => {
-			if (filterMode === 'pending-transfer' && group.doneCount === group.members.length) return false;
-			if (filterMode === 'pending-notify' && group.pendingNotifyCount === 0) return false;
-			if (!searchQuery.trim()) return true;
-			const q = searchQuery.toLowerCase();
-			return (
-				group.payeeName.toLowerCase().includes(q) ||
-				group.accountLabel.toLowerCase().includes(q) ||
-				group.members.some((member) =>
-					(member.recipient_name || '').toLowerCase().includes(q)
-				)
-			);
-		})
-	);
-	let selectedFamilyGroup = $derived(
-		selectedFamilyGroupKey
-			? familyTransferGroups.find(group => group.key === selectedFamilyGroupKey) || null
-			: null
-	);
 	let familyGroupByItemId = $derived(
 		(() => {
 			const map = new Map<number, FamilyTransferGroup>();
@@ -348,21 +322,28 @@
 		};
 	}
 
+	// Apply a partial update to an item by replacing its array element. Mutating
+	// item fields in place is not a reliable reactivity trigger for conditional
+	// blocks (e.g. the cash "Bayar" button), so always go through here.
+	function patchItem(item: BatchItem, patch: Partial<BatchItem>) {
+		const idx = items.findIndex((x) => x.id === item.id);
+		if (idx === -1) return;
+		items[idx] = { ...items[idx], ...patch };
+	}
+
 	async function updatePaymentMethod(item: BatchItem, method: 'transfer' | 'cash') {
 		if (!ensureEditMode()) return;
 		const prevMethod = item.payment_method;
 		const prevFee = item.transfer_fee;
-		item.payment_method = method;
-		if (method === 'cash') {
-			item.transfer_fee = 0;
-		}
+		const nextFee = method === 'cash' ? 0 : item.transfer_fee;
+		patchItem(item, { payment_method: method, transfer_fee: nextFee });
 		try {
 			const res = await fetch(`/api/batches/${batchId}/items/${item.id}`, {
 				method: 'PUT',
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({
 					payment_method: method,
-					transfer_fee: method === 'cash' ? 0 : item.transfer_fee
+					transfer_fee: nextFee
 				})
 			});
 			if (!res.ok) {
@@ -376,8 +357,7 @@
 				throw new Error(message);
 			}
 		} catch (e) {
-			item.payment_method = prevMethod;
-			item.transfer_fee = prevFee;
+			patchItem(item, { payment_method: prevMethod, transfer_fee: prevFee });
 			console.error('Failed to update payment method:', e);
 			addToast(
 				e instanceof Error ? e.message : 'Gagal mengubah metode pembayaran',
@@ -397,12 +377,12 @@
 		const prevStatus = item.transfer_status;
 		const prevTransferAt = item.transfer_at;
 		const prevNotifyStatus = item.notify_status;
-		item.payment_method = 'cash';
-		item.transfer_status = nextStatus;
-		item.transfer_at = nextTransferAt || undefined;
-		if (nextStatus === 'pending') {
-			item.notify_status = 'pending';
-		}
+		patchItem(item, {
+			payment_method: 'cash',
+			transfer_status: nextStatus,
+			transfer_at: nextTransferAt || undefined,
+			notify_status: nextNotifyStatus
+		});
 
 		try {
 			await fetch(`/api/batches/${batchId}/items/${item.id}`, {
@@ -425,10 +405,12 @@
 			await maybeCompleteBatch();
 		} catch (e) {
 			// Revert on failure
-			item.payment_method = prevMethod;
-			item.transfer_status = prevStatus;
-			item.transfer_at = prevTransferAt;
-			item.notify_status = prevNotifyStatus;
+			patchItem(item, {
+				payment_method: prevMethod,
+				transfer_status: prevStatus,
+				transfer_at: prevTransferAt,
+				notify_status: prevNotifyStatus
+			});
 			console.error('Failed to toggle cash paid:', e);
 			addToast('Gagal mengubah status pembayaran cash', 'error');
 		}
@@ -481,10 +463,9 @@
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({ item_ids: ids, status: 'skipped' })
 			});
-			// Update local state in place to preserve reactive references
-			for (const i of items) {
-				if (ids.includes(i.id!)) i.notify_status = 'skipped';
-			}
+			items = items.map((i) =>
+				ids.includes(i.id!) ? { ...i, notify_status: 'skipped' as const } : i
+			);
 		} catch (e) {
 			console.error('Failed to auto-skip notify for missing WhatsApp:', e);
 		} finally {
@@ -526,8 +507,7 @@
 			item.custom_zoom_amount
 		);
 		// Optimistic update
-		item.saturdays_attended = newSaturdays;
-		item.amount = newAmount;
+		patchItem(item, { saturdays_attended: newSaturdays, amount: newAmount });
 		try {
 			await fetch(`/api/batches/${batchId}/items/${item.id}`, {
 				method: 'PUT',
@@ -536,15 +516,17 @@
 			});
 		} catch (e) {
 			// Revert on error
-			item.saturdays_attended = oldSat;
-			item.amount = calculateAmount(
-				oldSat,
-				batch.transport_rate,
-				item.zoom_type,
-				batch.zoom_single_rate,
-				batch.zoom_family_rate,
-				item.custom_zoom_amount
-			);
+			patchItem(item, {
+				saturdays_attended: oldSat,
+				amount: calculateAmount(
+					oldSat,
+					batch.transport_rate,
+					item.zoom_type,
+					batch.zoom_single_rate,
+					batch.zoom_family_rate,
+					item.custom_zoom_amount
+				)
+			});
 			console.error('Failed to update saturdays:', e);
 			addToast('Gagal mengubah kehadiran', 'error');
 		}
@@ -571,9 +553,7 @@
 			nextCustom
 		);
 		// Optimistic update
-		item.zoom_type = newType;
-		item.custom_zoom_amount = nextCustom;
-		item.amount = newAmount;
+		patchItem(item, { zoom_type: newType, custom_zoom_amount: nextCustom, amount: newAmount });
 		try {
 			await fetch(`/api/batches/${batchId}/items/${item.id}`, {
 				method: 'PUT',
@@ -585,16 +565,18 @@
 			});
 		} catch (e) {
 			// Revert on error
-			item.zoom_type = oldType;
-			item.custom_zoom_amount = oldCustom;
-			item.amount = calculateAmount(
-				item.saturdays_attended,
-				batch.transport_rate,
-				oldType,
-				batch.zoom_single_rate,
-				batch.zoom_family_rate,
-				oldCustom
-			);
+			patchItem(item, {
+				zoom_type: oldType,
+				custom_zoom_amount: oldCustom,
+				amount: calculateAmount(
+					item.saturdays_attended,
+					batch.transport_rate,
+					oldType,
+					batch.zoom_single_rate,
+					batch.zoom_family_rate,
+					oldCustom
+				)
+			});
 			console.error('Failed to update zoom:', e);
 			addToast('Gagal mengubah zoom', 'error');
 		}
@@ -606,15 +588,17 @@
 		const sanitized = Math.max(0, Math.round(newAmount || 0));
 		const oldCustom = item.custom_zoom_amount;
 		const oldAmount = item.amount;
-		item.custom_zoom_amount = sanitized;
-		item.amount = calculateAmount(
-			item.saturdays_attended,
-			batch.transport_rate,
-			item.zoom_type,
-			batch.zoom_single_rate,
-			batch.zoom_family_rate,
-			sanitized
-		);
+		patchItem(item, {
+			custom_zoom_amount: sanitized,
+			amount: calculateAmount(
+				item.saturdays_attended,
+				batch.transport_rate,
+				item.zoom_type,
+				batch.zoom_single_rate,
+				batch.zoom_family_rate,
+				sanitized
+			)
+		});
 		try {
 			await fetch(`/api/batches/${batchId}/items/${item.id}`, {
 				method: 'PUT',
@@ -624,8 +608,7 @@
 				})
 			});
 		} catch (e) {
-			item.custom_zoom_amount = oldCustom;
-			item.amount = oldAmount;
+			patchItem(item, { custom_zoom_amount: oldCustom, amount: oldAmount });
 			console.error('Failed to update custom zoom amount:', e);
 			addToast('Gagal mengubah nominal zoom manual', 'error');
 		}
@@ -635,7 +618,7 @@
 		if (!ensureEditMode()) return;
 		const sanitized = Math.max(0, Math.round(newAmount || 0));
 		const oldAmount = item.amount;
-		item.amount = sanitized;
+		patchItem(item, { amount: sanitized });
 		try {
 			await fetch(`/api/batches/${batchId}/items/${item.id}`, {
 				method: 'PUT',
@@ -643,7 +626,7 @@
 				body: JSON.stringify({ amount: sanitized })
 			});
 		} catch (e) {
-			item.amount = oldAmount;
+			patchItem(item, { amount: oldAmount });
 			console.error('Failed to update amount:', e);
 			addToast('Gagal mengubah nominal', 'error');
 		}
@@ -653,7 +636,7 @@
 		if (!ensureEditMode()) return;
 		const sanitized = Math.max(0, Math.round(newFee || 0));
 		const oldFee = item.transfer_fee;
-		item.transfer_fee = sanitized;
+		patchItem(item, { transfer_fee: sanitized });
 		try {
 			await fetch(`/api/batches/${batchId}/items/${item.id}`, {
 				method: 'PUT',
@@ -661,7 +644,7 @@
 				body: JSON.stringify({ transfer_fee: sanitized })
 			});
 		} catch (e) {
-			item.transfer_fee = oldFee;
+			patchItem(item, { transfer_fee: oldFee });
 			console.error('Failed to update transfer fee:', e);
 			addToast('Gagal mengubah biaya transfer', 'error');
 		}
@@ -669,11 +652,11 @@
 
 	function handleTransferChange(item: BatchItem, newStatus: 'pending' | 'done', hasProofNow: boolean) {
 		if (!isEditMode) return;
-		item.transfer_status = newStatus;
-		item.has_transfer_proof = hasProofNow ? 1 : 0;
-		if (newStatus === 'pending') {
-			item.notify_status = 'pending';
-		}
+		patchItem(item, {
+			transfer_status: newStatus,
+			has_transfer_proof: hasProofNow ? 1 : 0,
+			...(newStatus === 'pending' ? { notify_status: 'pending' as const } : {})
+		});
 		addToast(
 			newStatus === 'done'
 				? `Transfer ${item.recipient_name} selesai`
@@ -695,7 +678,7 @@
 					notified_at: new Date().toISOString()
 				})
 			});
-			item.notify_status = 'sent';
+			patchItem(item, { notify_status: 'sent' });
 			addToast(`WA ${item.recipient_name} terkirim`, 'success');
 			await maybeCompleteBatch();
 		} catch (e) {
@@ -720,7 +703,7 @@
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({ transfer_at: iso })
 			});
-			item.transfer_at = iso || undefined;
+			patchItem(item, { transfer_at: iso || undefined });
 			addToast('Tanggal transfer diperbarui', 'success');
 		} catch (e) {
 			console.error('Failed to update transfer date:', e);
@@ -801,113 +784,6 @@
 	function parseCurrencyInput(value: string): number {
 		const digits = value.replace(/\D/g, '');
 		return digits ? Number(digits) : 0;
-	}
-
-	async function prepareFamilyProofImage(file: File): Promise<File> {
-		if (!file.type.startsWith('image/')) {
-			throw new Error('File harus berupa gambar');
-		}
-		return new Promise((resolve, reject) => {
-			const img = new window.Image();
-			const objectUrl = URL.createObjectURL(file);
-			img.onload = async () => {
-				try {
-					URL.revokeObjectURL(objectUrl);
-					const width = Math.max(1, Math.round(img.width * 0.7));
-					const height = Math.max(1, Math.round(img.height * 0.7));
-					const canvas = document.createElement('canvas');
-					canvas.width = width;
-					canvas.height = height;
-					const ctx = canvas.getContext('2d');
-					if (!ctx) {
-						reject(new Error('Gagal memproses gambar'));
-						return;
-					}
-					ctx.drawImage(img, 0, 0, width, height);
-					const blob = await new Promise<Blob | null>((result) =>
-						canvas.toBlob(result, 'image/jpeg', 0.85)
-					);
-					if (!blob || blob.size === 0) {
-						reject(new Error('Format gambar tidak didukung'));
-						return;
-					}
-					const baseName = file.name.replace(/\.[^.]+$/, '') || 'family-proof';
-					resolve(new File([blob], `${baseName}.jpg`, { type: 'image/jpeg' }));
-				} catch (error) {
-					reject(error instanceof Error ? error : new Error('Gagal memproses gambar'));
-				}
-			};
-			img.onerror = () => {
-				URL.revokeObjectURL(objectUrl);
-				reject(new Error('Format gambar tidak didukung. Gunakan JPG/PNG atau screenshot.'));
-			};
-			img.src = objectUrl;
-		});
-	}
-
-	function openFamilyTransfer(group: FamilyTransferGroup) {
-		selectedFamilyGroupKey = group.key;
-		familyTransferDate = formatDateInput(group.latestTransferAt) || new Date().toISOString().slice(0, 10);
-		familyTransferFeeInput = String(group.totalFee || 0);
-		familyTransferFile = null;
-	}
-
-	function closeFamilyTransfer() {
-		selectedFamilyGroupKey = null;
-		familyTransferSubmitting = false;
-		familyTransferFile = null;
-	}
-
-	async function submitFamilyTransfer() {
-		if (!ensureEditMode()) return;
-		if (!selectedFamilyGroup) return;
-		if (!familyTransferFile) {
-			addToast('Upload bukti transfer keluarga dulu', 'info');
-			return;
-		}
-
-		familyTransferSubmitting = true;
-		try {
-			const preparedFile = await prepareFamilyProofImage(familyTransferFile);
-			const formData = new FormData();
-			formData.set(
-				'item_ids',
-				JSON.stringify(selectedFamilyGroup.members.map((member) => member.id).filter(Boolean))
-			);
-			formData.set('lead_item_id', String(selectedFamilyGroup.leadItemId));
-			formData.set('transfer_fee', String(parseCurrencyInput(familyTransferFeeInput)));
-			formData.set('transfer_at', familyTransferDate || new Date().toISOString().slice(0, 10));
-			formData.set('proof', preparedFile);
-
-			const res = await fetch(`/api/batches/${batchId}/family-transfer`, {
-				method: 'POST',
-				body: formData
-			});
-			if (!res.ok) {
-				let msg = 'Gagal menyimpan transfer keluarga';
-				try {
-					const payload = await res.json();
-					msg = payload?.error || msg;
-				} catch {
-					// no-op
-				}
-				throw new Error(msg);
-			}
-
-			addToast(
-				`Transfer keluarga ${selectedFamilyGroup.payeeName} tersimpan (${selectedFamilyGroup.members.length} anggota)`,
-				'success'
-			);
-			closeFamilyTransfer();
-			await loadData();
-			await autoSkipMissingWhatsapp();
-			await maybeCompleteBatch();
-		} catch (e) {
-			console.error('Failed to submit family transfer:', e);
-			addToast(e instanceof Error ? e.message : 'Gagal menyimpan transfer keluarga', 'error');
-		} finally {
-			familyTransferSubmitting = false;
-		}
 	}
 
 	function getProofUrl(item: BatchItem): string | undefined {
@@ -1118,20 +994,6 @@
 							</button>
 						{/if}
 					</div>
-					<div class="flex items-center gap-1 glass-dark rounded-full px-2 py-1">
-						<button
-							onclick={() => { viewMode = 'family'; }}
-							class="nav-pill {viewMode === 'family' ? 'nav-pill-active' : ''}"
-						>
-							Per Keluarga
-						</button>
-						<button
-							onclick={() => { viewMode = 'individual'; }}
-							class="nav-pill {viewMode === 'individual' ? 'nav-pill-active' : ''}"
-						>
-							Per Orang
-						</button>
-					</div>
 				</div>
 				<div class="flex items-center gap-2 w-full lg:w-auto">
 					<select
@@ -1155,58 +1017,7 @@
 		</div>
 
 		<!-- Checklist -->
-		{#if viewMode === 'family'}
-			{#if visibleFamilyTransferGroups.length === 0}
-				<EmptyState
-					icon={UsersIcon}
-					title="Belum ada grup transfer keluarga"
-					description="Gunakan mode Per Orang untuk transfer individual atau cek data family tag di halaman penerima."
-				/>
-			{:else}
-				<div class="grid gap-3 sm:grid-cols-2 fade-up">
-					{#each visibleFamilyTransferGroups as group, i}
-						<div class="glass-card rounded-2xl p-4 border border-amber-400/20">
-							<div class="flex items-start justify-between gap-3">
-								<div class="min-w-0">
-									<p class="text-white font-semibold text-sm">{i + 1}. {group.payeeName}</p>
-									<p class="text-white/50 text-xs mt-0.5">{group.accountLabel}</p>
-									<p class="text-amber-200/80 text-xs mt-1">
-										{group.members.length} anggota: {group.members.map((member) => member.recipient_name).join(', ')}
-									</p>
-								</div>
-								<button
-									onclick={() => openFamilyTransfer(group)}
-									disabled={!isEditMode}
-									class="glass-button shrink-0 rounded-lg px-3 py-1.5 text-xs border border-emerald-500/30
-										{!isEditMode ? 'opacity-50 cursor-not-allowed bg-emerald-500/10' : 'bg-emerald-500/20 hover:bg-emerald-500/35 text-emerald-200'}"
-								>
-									Transfer Keluarga
-								</button>
-							</div>
-
-							<div class="grid grid-cols-2 gap-2 mt-3 text-xs">
-								<div class="rounded-lg bg-white/5 px-2.5 py-2">
-									<p class="text-white/45">Total Hak</p>
-									<p class="text-white font-semibold">{formatRupiah(group.totalAmount)}</p>
-								</div>
-								<div class="rounded-lg bg-white/5 px-2.5 py-2">
-									<p class="text-white/45">Biaya TF (1x)</p>
-									<p class="text-violet-200 font-semibold">{formatRupiah(group.totalFee)}</p>
-								</div>
-								<div class="rounded-lg bg-white/5 px-2.5 py-2">
-									<p class="text-white/45">Total Kirim</p>
-									<p class="text-emerald-200 font-semibold">{formatRupiah(group.totalSend)}</p>
-								</div>
-								<div class="rounded-lg bg-white/5 px-2.5 py-2">
-									<p class="text-white/45">Status</p>
-									<p class="text-white/80">{group.doneCount}/{group.members.length} transfer • {group.proofCount}/{group.members.length} bukti</p>
-								</div>
-							</div>
-						</div>
-					{/each}
-				</div>
-			{/if}
-		{:else if visibleItems.length === 0}
+		{#if visibleItems.length === 0}
 			<EmptyState
 				icon={SearchX}
 				title="Tidak ada data untuk filter ini"
@@ -1696,106 +1507,6 @@
 			</div>
 		{/if}
 
-		{#if selectedFamilyGroup}
-			<div class="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
-				<div class="glass-card w-full max-w-lg rounded-2xl p-4 border border-white/15">
-					<div class="flex items-start justify-between gap-3 mb-3">
-						<div>
-							<p class="text-white text-base font-semibold">Transfer Keluarga</p>
-							<p class="text-white/55 text-xs mt-0.5">
-								Via {selectedFamilyGroup.payeeName} • {selectedFamilyGroup.members.length} anggota
-							</p>
-						</div>
-						<button
-							type="button"
-							class="text-white/40 hover:text-white/70 text-xs"
-							onclick={closeFamilyTransfer}
-							disabled={familyTransferSubmitting}
-						>
-							Tutup
-						</button>
-					</div>
-
-					<div class="grid grid-cols-1 sm:grid-cols-3 gap-2 mb-3 text-xs">
-						<div class="rounded-lg bg-white/5 px-2.5 py-2">
-							<p class="text-white/45">Total Hak</p>
-							<p class="text-white font-semibold">{formatRupiah(selectedFamilyGroup.totalAmount)}</p>
-						</div>
-						<div class="rounded-lg bg-white/5 px-2.5 py-2">
-							<p class="text-white/45">Biaya TF</p>
-							<p class="text-violet-200 font-semibold">{formatRupiah(parseCurrencyInput(familyTransferFeeInput))}</p>
-						</div>
-						<div class="rounded-lg bg-white/5 px-2.5 py-2">
-							<p class="text-white/45">Total Kirim</p>
-							<p class="text-emerald-200 font-semibold">
-								{formatRupiah(selectedFamilyGroup.totalAmount + parseCurrencyInput(familyTransferFeeInput))}
-							</p>
-						</div>
-					</div>
-
-					<div class="space-y-2.5 mb-3">
-						<div>
-							<label for="family-transfer-date" class="block text-white/70 text-xs uppercase tracking-wider mb-1.5">Tanggal Transfer</label>
-							<input
-								id="family-transfer-date"
-								type="date"
-								class="glass-input rounded-lg px-3 py-2 text-sm text-white w-full"
-								bind:value={familyTransferDate}
-								disabled={familyTransferSubmitting}
-							/>
-						</div>
-						<div>
-							<label for="family-transfer-fee" class="block text-white/70 text-xs uppercase tracking-wider mb-1.5">Biaya Transfer (1x)</label>
-							<input
-								id="family-transfer-fee"
-								type="text"
-								inputmode="numeric"
-								class="glass-input rounded-lg px-3 py-2 text-sm text-white w-full"
-								value={formatCurrencyInput(parseCurrencyInput(familyTransferFeeInput))}
-								disabled={familyTransferSubmitting}
-								onfocus={(e) => { (e.target as HTMLInputElement).value = String(parseCurrencyInput(familyTransferFeeInput)); }}
-								onblur={(e) => { familyTransferFeeInput = String(parseCurrencyInput((e.target as HTMLInputElement).value)); }}
-							/>
-						</div>
-						<div>
-							<label for="family-transfer-proof" class="block text-white/70 text-xs uppercase tracking-wider mb-1.5">Bukti Transfer (1 file untuk semua anggota)</label>
-							<input
-								id="family-transfer-proof"
-								type="file"
-								accept="image/*"
-								class="glass-input rounded-lg px-3 py-2 text-sm text-white w-full"
-								disabled={familyTransferSubmitting}
-								onchange={(e) => {
-									familyTransferFile = (e.target as HTMLInputElement).files?.[0] || null;
-								}}
-							/>
-							{#if familyTransferFile}
-								<p class="text-white/45 text-xs mt-1">File: {familyTransferFile.name}</p>
-							{/if}
-						</div>
-					</div>
-
-					<div class="flex justify-end gap-2">
-						<button
-							type="button"
-							class="glass-button rounded-lg px-3 py-2 text-xs border border-white/20 text-white/70"
-							onclick={closeFamilyTransfer}
-							disabled={familyTransferSubmitting}
-						>
-							Batal
-						</button>
-						<button
-							type="button"
-							class="glass-button rounded-lg px-3 py-2 text-xs border border-emerald-500/30 bg-emerald-500/20 text-emerald-200 disabled:opacity-50 disabled:cursor-not-allowed"
-							onclick={submitFamilyTransfer}
-							disabled={familyTransferSubmitting}
-						>
-							{familyTransferSubmitting ? 'Menyimpan...' : 'Terapkan ke Semua Anggota'}
-						</button>
-					</div>
-				</div>
-			</div>
-		{/if}
 	{:else}
 		<EmptyState
 			icon={Layers}
