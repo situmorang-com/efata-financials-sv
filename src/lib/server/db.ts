@@ -7,6 +7,7 @@ import {
   readFileSync,
   unlinkSync,
 } from "fs";
+import { createHash } from "crypto";
 import { join } from "path";
 import type {
   Recipient,
@@ -19,6 +20,9 @@ import type {
   FinanceParty,
   FinanceAccount,
   FinanceTransaction,
+  BoardApproval,
+  BoardApprovalVote,
+  BoardApprovalVoteSummary,
 } from "$lib/types.js";
 import { calculateAmount } from "$lib/types.js";
 import { seedRecipients } from "./seed.js";
@@ -32,6 +36,11 @@ if (!existsSync(DATA_DIR)) {
 const PROOFS_DIR = join(DATA_DIR, "proofs");
 if (!existsSync(PROOFS_DIR)) {
   mkdirSync(PROOFS_DIR, { recursive: true });
+}
+
+const APPROVAL_PROOFS_DIR = join(DATA_DIR, "approval-proofs");
+if (!existsSync(APPROVAL_PROOFS_DIR)) {
+  mkdirSync(APPROVAL_PROOFS_DIR, { recursive: true });
 }
 
 export function getProofPath(filename: string): string {
@@ -61,6 +70,40 @@ export function deleteProofFile(filename: string): void {
   if (existsSync(filepath)) {
     unlinkSync(filepath);
   }
+}
+
+export function saveApprovalProofFile(
+  approvalId: number,
+  buffer: Buffer,
+  extension: string,
+  preferredBaseName?: string,
+): string {
+  const safeBase = preferredBaseName
+    ?.trim()
+    .replace(/[^a-zA-Z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 90);
+  const stamp = Date.now().toString(36);
+  const filename = `${safeBase || `approval-${approvalId}`}-${stamp}.${extension}`;
+  writeFileSync(join(APPROVAL_PROOFS_DIR, filename), buffer);
+  return filename;
+}
+
+export function readApprovalProofFile(filename: string): Buffer | null {
+  const filepath = join(APPROVAL_PROOFS_DIR, filename);
+  if (!existsSync(filepath)) return null;
+  return readFileSync(filepath);
+}
+
+export function deleteApprovalProofFile(filename: string): void {
+  const filepath = join(APPROVAL_PROOFS_DIR, filename);
+  if (existsSync(filepath)) {
+    unlinkSync(filepath);
+  }
+}
+
+export function sha256Hex(buffer: Buffer): string {
+  return createHash("sha256").update(buffer).digest("hex");
 }
 
 const DB_PATH = join(DATA_DIR, "efata.db");
@@ -227,6 +270,45 @@ db.exec(`
 `);
 
 db.exec(`
+  CREATE TABLE IF NOT EXISTS board_approvals (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    kind TEXT NOT NULL DEFAULT 'expense' CHECK (kind IN ('expense', 'decision', 'budget', 'policy', 'other')),
+    title TEXT NOT NULL,
+    decision_date TEXT NOT NULL,
+    amount INTEGER NOT NULL DEFAULT 0 CHECK (amount >= 0),
+    currency TEXT NOT NULL DEFAULT 'IDR',
+    status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'approved', 'superseded', 'rejected')),
+    approvers TEXT NOT NULL,
+    whatsapp_context TEXT,
+    notes TEXT,
+    proof_filename TEXT,
+    proof_original_name TEXT,
+    proof_mime TEXT,
+    proof_size INTEGER,
+    proof_sha256 TEXT,
+    created_by_email TEXT,
+    updated_by_email TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  )
+`);
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS board_approval_votes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    approval_id INTEGER NOT NULL,
+    voter_email TEXT NOT NULL,
+    voter_name TEXT,
+    vote TEXT NOT NULL CHECK (vote IN ('agree', 'disagree')),
+    comment TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY (approval_id) REFERENCES board_approvals(id) ON DELETE CASCADE,
+    UNIQUE(approval_id, voter_email)
+  )
+`);
+
+db.exec(`
   CREATE TABLE IF NOT EXISTS bank_statement_imports (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     account_no TEXT NOT NULL,
@@ -316,6 +398,18 @@ db.exec(
 );
 db.exec(`CREATE INDEX IF NOT EXISTS idx_audit_actor ON audit_logs(actor_id)`);
 db.exec(
+  `CREATE INDEX IF NOT EXISTS idx_board_approvals_date ON board_approvals(decision_date DESC, id DESC)`,
+);
+db.exec(
+  `CREATE INDEX IF NOT EXISTS idx_board_approvals_kind_status ON board_approvals(kind, status)`,
+);
+db.exec(
+  `CREATE INDEX IF NOT EXISTS idx_board_votes_approval ON board_approval_votes(approval_id, vote)`,
+);
+db.exec(
+  `CREATE INDEX IF NOT EXISTS idx_board_votes_voter ON board_approval_votes(voter_email)`,
+);
+db.exec(
   `CREATE INDEX IF NOT EXISTS idx_bank_import_status ON bank_statement_imports(status, period_from, period_to)`,
 );
 db.exec(
@@ -363,6 +457,91 @@ function normalizeAccountNumber(value?: string | null): string {
 
 function normalizeAccountNumberSql(expr: string): string {
   return `replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(${expr}, ' ', ''), '-', ''), '.', ''), '/', ''), '(', ''), ')', ''), '+', ''), '_', ''), '*', ''), '#', '')`;
+}
+
+function migrateBoardApprovalsStatusCheck(): void {
+  if (!tableExists("board_approvals")) return;
+  const row = db
+    .prepare(
+      "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'board_approvals'",
+    )
+    .get() as { sql?: string } | undefined;
+  if (row?.sql?.includes("'pending'")) return;
+
+  db.exec(`
+    ALTER TABLE board_approvals RENAME TO board_approvals_old;
+
+    CREATE TABLE board_approvals (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      kind TEXT NOT NULL DEFAULT 'expense' CHECK (kind IN ('expense', 'decision', 'budget', 'policy', 'other')),
+      title TEXT NOT NULL,
+      decision_date TEXT NOT NULL,
+      amount INTEGER NOT NULL DEFAULT 0 CHECK (amount >= 0),
+      currency TEXT NOT NULL DEFAULT 'IDR',
+      status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'approved', 'superseded', 'rejected')),
+      approvers TEXT NOT NULL,
+      whatsapp_context TEXT,
+      notes TEXT,
+      proof_filename TEXT,
+      proof_original_name TEXT,
+      proof_mime TEXT,
+      proof_size INTEGER,
+      proof_sha256 TEXT,
+      created_by_email TEXT,
+      updated_by_email TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    INSERT INTO board_approvals (
+      id, kind, title, decision_date, amount, currency, status, approvers,
+      whatsapp_context, notes, proof_filename, proof_original_name, proof_mime,
+      proof_size, proof_sha256, created_by_email, updated_by_email, created_at, updated_at
+    )
+    SELECT
+      id, kind, title, decision_date, amount, currency, status, approvers,
+      whatsapp_context, notes, proof_filename, proof_original_name, proof_mime,
+      proof_size, proof_sha256, created_by_email, updated_by_email, created_at, updated_at
+    FROM board_approvals_old;
+
+    DROP TABLE board_approvals_old;
+  `);
+}
+
+function migrateBoardApprovalVotesForeignKey(): void {
+  if (!tableExists("board_approval_votes")) return;
+  const row = db
+    .prepare(
+      "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'board_approval_votes'",
+    )
+    .get() as { sql?: string } | undefined;
+  if (!row?.sql?.includes("board_approvals_old")) return;
+
+  db.exec(`
+    ALTER TABLE board_approval_votes RENAME TO board_approval_votes_old;
+
+    CREATE TABLE board_approval_votes (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      approval_id INTEGER NOT NULL,
+      voter_email TEXT NOT NULL,
+      voter_name TEXT,
+      vote TEXT NOT NULL CHECK (vote IN ('agree', 'disagree')),
+      comment TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY (approval_id) REFERENCES board_approvals(id) ON DELETE CASCADE,
+      UNIQUE(approval_id, voter_email)
+    );
+
+    INSERT INTO board_approval_votes (
+      id, approval_id, voter_email, voter_name, vote, comment, created_at, updated_at
+    )
+    SELECT
+      id, approval_id, voter_email, voter_name, vote, comment, created_at, updated_at
+    FROM board_approval_votes_old;
+
+    DROP TABLE board_approval_votes_old;
+  `);
 }
 
 function backfillReconciliationLinkedAccounts(): void {
@@ -485,6 +664,20 @@ if (
   `);
 }
 
+migrateBoardApprovalsStatusCheck();
+migrateBoardApprovalVotesForeignKey();
+db.exec(
+  `CREATE INDEX IF NOT EXISTS idx_board_approvals_date ON board_approvals(decision_date DESC, id DESC)`,
+);
+db.exec(
+  `CREATE INDEX IF NOT EXISTS idx_board_approvals_kind_status ON board_approvals(kind, status)`,
+);
+db.exec(
+  `CREATE INDEX IF NOT EXISTS idx_board_votes_approval ON board_approval_votes(approval_id, vote)`,
+);
+db.exec(
+  `CREATE INDEX IF NOT EXISTS idx_board_votes_voter ON board_approval_votes(voter_email)`,
+);
 remapReconciliationData();
 
 // Recipients migrations
@@ -1651,6 +1844,29 @@ export const batchItemDb = {
     syncBatchTransferExpense(batchId);
     return count;
   },
+
+  bulkUpdateFees: (
+    batchId: number,
+    fees: Array<{ id: number; transfer_fee: number }>,
+  ): number => {
+    const now = new Date().toISOString();
+    let count = 0;
+    const updateTransaction = db.transaction(() => {
+      for (const { id, transfer_fee } of fees) {
+        const fee = Math.max(0, Math.round(Number(transfer_fee) || 0));
+        // Never set a fee on a cash payment.
+        const result = db
+          .prepare(
+            "UPDATE batch_items SET transfer_fee = ?, updated_at = ? WHERE id = ? AND lower(trim(COALESCE(payment_method, ''))) != 'cash'",
+          )
+          .run(fee, now, id);
+        count += result.changes;
+      }
+    });
+    updateTransaction();
+    syncBatchTransferExpense(batchId);
+    return count;
+  },
 };
 
 export const attendanceDb = {
@@ -1980,6 +2196,269 @@ export const financeAccountDb = {
       .prepare("UPDATE accounts SET is_active = 0, updated_at = ? WHERE id = ?")
       .run(now, id);
     return result.changes > 0;
+  },
+};
+
+const boardApprovalKinds = new Set([
+  "expense",
+  "decision",
+  "budget",
+  "policy",
+  "other",
+]);
+const boardApprovalStatuses = new Set(["pending", "approved", "superseded", "rejected"]);
+
+function normalizeBoardApprovalKind(value?: string | null): BoardApproval["kind"] {
+  return boardApprovalKinds.has(String(value || "")) ? (value as BoardApproval["kind"]) : "expense";
+}
+
+function normalizeBoardApprovalStatus(value?: string | null): BoardApproval["status"] {
+  return boardApprovalStatuses.has(String(value || ""))
+    ? (value as BoardApproval["status"])
+    : "pending";
+}
+
+export const boardApprovalDb = {
+  getAll: (filters?: {
+    kind?: BoardApproval["kind"];
+    status?: BoardApproval["status"];
+    from?: string;
+    to?: string;
+    q?: string;
+  }): BoardApproval[] => {
+    const where: string[] = [];
+    const params: unknown[] = [];
+
+    if (filters?.kind) {
+      where.push("kind = ?");
+      params.push(filters.kind);
+    }
+    if (filters?.status) {
+      where.push("status = ?");
+      params.push(filters.status);
+    }
+    if (filters?.from) {
+      where.push("date(decision_date) >= date(?)");
+      params.push(filters.from);
+    }
+    if (filters?.to) {
+      where.push("date(decision_date) <= date(?)");
+      params.push(filters.to);
+    }
+    if (filters?.q) {
+      where.push(
+        "(COALESCE(title, '') LIKE ? OR COALESCE(approvers, '') LIKE ? OR COALESCE(whatsapp_context, '') LIKE ? OR COALESCE(notes, '') LIKE ?)",
+      );
+      const qTerm = `%${filters.q}%`;
+      params.push(qTerm, qTerm, qTerm, qTerm);
+    }
+
+    return db
+      .prepare(
+        `SELECT *
+         FROM board_approvals
+         ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
+         ORDER BY date(decision_date) DESC, id DESC`,
+      )
+      .all(...params) as BoardApproval[];
+  },
+
+  getById: (id: number): BoardApproval | undefined => {
+    return db
+      .prepare("SELECT * FROM board_approvals WHERE id = ?")
+      .get(id) as BoardApproval | undefined;
+  },
+
+  create: (data: {
+    kind?: string | null;
+    title: string;
+    decision_date: string;
+    amount?: number | null;
+    currency?: string | null;
+    status?: string | null;
+    approvers: string;
+    whatsapp_context?: string | null;
+    notes?: string | null;
+    created_by_email?: string | null;
+    updated_by_email?: string | null;
+  }): BoardApproval => {
+    const now = new Date().toISOString();
+    const amount = Math.max(0, Math.round(Number(data.amount) || 0));
+    const currency = String(data.currency || "IDR").trim().toUpperCase().slice(0, 8) || "IDR";
+    const result = db
+      .prepare(
+        `INSERT INTO board_approvals
+         (kind, title, decision_date, amount, currency, status, approvers, whatsapp_context, notes, created_by_email, updated_by_email, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        normalizeBoardApprovalKind(data.kind),
+        data.title.trim(),
+        data.decision_date,
+        amount,
+        currency,
+        normalizeBoardApprovalStatus(data.status),
+        data.approvers.trim(),
+        data.whatsapp_context?.trim() || null,
+        data.notes?.trim() || null,
+        data.created_by_email ?? null,
+        data.updated_by_email ?? data.created_by_email ?? null,
+        now,
+        now,
+      );
+
+    return boardApprovalDb.getById(result.lastInsertRowid as number) as BoardApproval;
+  },
+
+  update: (
+    id: number,
+    data: Partial<
+      Pick<
+        BoardApproval,
+        | "kind"
+        | "title"
+        | "decision_date"
+        | "amount"
+        | "currency"
+        | "status"
+        | "approvers"
+        | "whatsapp_context"
+        | "notes"
+        | "updated_by_email"
+      >
+    >,
+  ): boolean => {
+    const existing = boardApprovalDb.getById(id);
+    if (!existing) return false;
+    const now = new Date().toISOString();
+    const updated = { ...existing, ...data };
+    const result = db
+      .prepare(
+        `UPDATE board_approvals
+         SET kind = ?, title = ?, decision_date = ?, amount = ?, currency = ?, status = ?, approvers = ?, whatsapp_context = ?, notes = ?, updated_by_email = ?, updated_at = ?
+         WHERE id = ?`,
+      )
+      .run(
+        normalizeBoardApprovalKind(updated.kind),
+        String(updated.title || "").trim(),
+        updated.decision_date,
+        Math.max(0, Math.round(Number(updated.amount) || 0)),
+        String(updated.currency || "IDR").trim().toUpperCase().slice(0, 8) || "IDR",
+        normalizeBoardApprovalStatus(updated.status),
+        String(updated.approvers || "").trim(),
+        updated.whatsapp_context?.trim() || null,
+        updated.notes?.trim() || null,
+        updated.updated_by_email ?? existing.updated_by_email ?? null,
+        now,
+        id,
+      );
+    return result.changes > 0;
+  },
+
+  setProof: (
+    id: number,
+    proof: {
+      filename: string | null;
+      original_name?: string | null;
+      mime?: string | null;
+      size?: number | null;
+      sha256?: string | null;
+      updated_by_email?: string | null;
+    },
+  ): boolean => {
+    const now = new Date().toISOString();
+    const result = db
+      .prepare(
+        `UPDATE board_approvals
+         SET proof_filename = ?, proof_original_name = ?, proof_mime = ?, proof_size = ?, proof_sha256 = ?, updated_by_email = COALESCE(?, updated_by_email), updated_at = ?
+         WHERE id = ?`,
+      )
+      .run(
+        proof.filename,
+        proof.original_name ?? null,
+        proof.mime ?? null,
+        proof.size ?? null,
+        proof.sha256 ?? null,
+        proof.updated_by_email ?? null,
+        now,
+        id,
+      );
+    return result.changes > 0;
+  },
+};
+
+export const boardApprovalVoteDb = {
+  getByApprovalId: (approvalId: number): BoardApprovalVote[] => {
+    return db
+      .prepare(
+        `SELECT *
+         FROM board_approval_votes
+         WHERE approval_id = ?
+         ORDER BY updated_at DESC, id DESC`,
+      )
+      .all(approvalId) as BoardApprovalVote[];
+  },
+
+  getByApprovalAndEmail: (
+    approvalId: number,
+    voterEmail: string,
+  ): BoardApprovalVote | undefined => {
+    return db
+      .prepare(
+        `SELECT *
+         FROM board_approval_votes
+         WHERE approval_id = ? AND lower(voter_email) = lower(?)
+         LIMIT 1`,
+      )
+      .get(approvalId, voterEmail) as BoardApprovalVote | undefined;
+  },
+
+  getSummary: (approvalId: number): BoardApprovalVoteSummary => {
+    const rows = db
+      .prepare(
+        `SELECT vote, COUNT(*) AS count
+         FROM board_approval_votes
+         WHERE approval_id = ?
+         GROUP BY vote`,
+      )
+      .all(approvalId) as Array<{ vote: "agree" | "disagree"; count: number }>;
+    const agree = rows.find((row) => row.vote === "agree")?.count ?? 0;
+    const disagree = rows.find((row) => row.vote === "disagree")?.count ?? 0;
+    return { agree, disagree, total: agree + disagree };
+  },
+
+  upsert: (data: {
+    approval_id: number;
+    voter_email: string;
+    voter_name?: string | null;
+    vote: "agree" | "disagree";
+    comment?: string | null;
+  }): BoardApprovalVote => {
+    const now = new Date().toISOString();
+    const email = data.voter_email.trim().toLowerCase();
+    db.prepare(
+      `INSERT INTO board_approval_votes
+       (approval_id, voter_email, voter_name, vote, comment, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(approval_id, voter_email)
+       DO UPDATE SET
+         voter_name = excluded.voter_name,
+         vote = excluded.vote,
+         comment = excluded.comment,
+         updated_at = excluded.updated_at`,
+    ).run(
+      data.approval_id,
+      email,
+      data.voter_name?.trim() || null,
+      data.vote,
+      data.comment?.trim() || null,
+      now,
+      now,
+    );
+    return boardApprovalVoteDb.getByApprovalAndEmail(
+      data.approval_id,
+      email,
+    ) as BoardApprovalVote;
   },
 };
 

@@ -21,6 +21,7 @@
 	import ArrowRightLeft from '@lucide/svelte/icons/arrow-right-left';
 	import Bell from '@lucide/svelte/icons/bell';
 	import Banknote from '@lucide/svelte/icons/banknote';
+	import CircleDollarSign from '@lucide/svelte/icons/circle-dollar-sign';
 	import CalendarDays from '@lucide/svelte/icons/calendar-days';
 	import Download from '@lucide/svelte/icons/download';
 	import Lock from '@lucide/svelte/icons/lock';
@@ -39,6 +40,9 @@
 	let isEditMode = $state(false);
 	let isSpecial = $derived(batch?.type === 'special');
 	let selectedSourceBank = $state<'mandiri' | 'bca'>('mandiri');
+	let feeSaving = $state(false);
+	// Rows the user typed a fee into this session — recalc must not clobber them.
+	const manualFeeIds = new Set<number>();
 
 	type FamilyTransferGroup = {
 		key: string;
@@ -165,14 +169,52 @@
 		return 2500;
 	}
 
-	// NOTE: this runs inside an $effect, so it must not reassign `items`
-	// (a new array reference re-triggers the effect → infinite loop). Mutate
-	// transfer_fee in place — the effect never reads that field, so no loop.
-	function updateDefaultFeesForBank(bank: 'mandiri' | 'bca') {
-		for (const item of items) {
-			if (isCash(item)) continue;
-			const destBank = item.actual_bank_name || item.bank_name;
-			item.transfer_fee = getTransferFee(bank, destBank);
+	// Recalculate every non-cash recipient's transfer fee from the selected
+	// source bank and persist to the DB so reports reflect it. Rows the user
+	// edited by hand this session are left untouched. Explicit action only —
+	// nothing auto-overwrites saved fees on load or bank change.
+	async function recalcAndSaveFees() {
+		if (!ensureEditMode()) return;
+		if (feeSaving) return;
+		const fees = items
+			.filter((i) => i.id && !isCash(i) && !manualFeeIds.has(i.id))
+			.map((i) => ({
+				id: i.id!,
+				transfer_fee: getTransferFee(selectedSourceBank, i.actual_bank_name || i.bank_name)
+			}));
+		if (fees.length === 0) {
+			addToast('Tidak ada penerima transfer untuk dihitung', 'info');
+			return;
+		}
+		const feeById = new Map(fees.map((f) => [f.id, f.transfer_fee]));
+		// Optimistic display update (single reassignment — safe outside effects).
+		items = items.map((i) =>
+			i.id && feeById.has(i.id) ? { ...i, transfer_fee: feeById.get(i.id)! } : i
+		);
+		feeSaving = true;
+		try {
+			const res = await fetch(`/api/batches/${batchId}/bulk-fees`, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ fees })
+			});
+			if (!res.ok) {
+				let message = 'Gagal menyimpan biaya transfer';
+				try {
+					const payload = await res.json();
+					message = payload?.error || message;
+				} catch {
+					// no-op
+				}
+				throw new Error(message);
+			}
+			addToast(`Biaya transfer dihitung ulang & disimpan (${fees.length} penerima)`, 'success');
+		} catch (e) {
+			console.error('Failed to save transfer fees:', e);
+			addToast(e instanceof Error ? e.message : 'Gagal menyimpan biaya transfer', 'error');
+			await loadData();
+		} finally {
+			feeSaving = false;
 		}
 	}
 
@@ -639,6 +681,7 @@
 		if (!ensureEditMode()) return;
 		const sanitized = Math.max(0, Math.round(newFee || 0));
 		const oldFee = item.transfer_fee;
+		if (item.id) manualFeeIds.add(item.id);
 		patchItem(item, { transfer_fee: sanitized });
 		try {
 			await fetch(`/api/batches/${batchId}/items/${item.id}`, {
@@ -797,11 +840,6 @@
 
 	$effect(() => {
 		loadData();
-	});
-
-	$effect(() => {
-		selectedSourceBank;
-		updateDefaultFeesForBank(selectedSourceBank);
 	});
 </script>
 
@@ -1001,11 +1039,23 @@
 				<div class="flex items-center gap-2 w-full lg:w-auto">
 					<select
 						bind:value={selectedSourceBank}
+						onchange={() => { if (isEditMode) recalcAndSaveFees(); }}
 						class="glass-input rounded-full px-3 py-2 text-white text-sm bg-white/10 border border-white/20 focus:outline-none focus:ring-2 focus:ring-white/20"
 					>
 						<option value="mandiri">Mandiri</option>
 						<option value="bca">BCA</option>
 					</select>
+					<button
+						type="button"
+						onclick={recalcAndSaveFees}
+						disabled={!isEditMode || feeSaving}
+						title={!isEditMode ? 'Aktifkan Edit untuk menghitung biaya' : 'Hitung ulang biaya transfer dari bank sumber & simpan'}
+						class="glass-button rounded-full px-3 py-2 text-sm border border-violet-400/30 flex items-center gap-1.5 whitespace-nowrap
+							{!isEditMode || feeSaving ? 'opacity-50 cursor-not-allowed bg-violet-500/10 text-white/60' : 'bg-violet-500/20 hover:bg-violet-500/35 text-violet-100'}"
+					>
+						<CircleDollarSign class="w-4 h-4" />
+						{feeSaving ? 'Menyimpan...' : 'Hitung Biaya'}
+					</button>
 					<div class="relative flex-1 lg:w-72">
 						<Search class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-white/30" />
 						<input
