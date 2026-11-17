@@ -14,7 +14,10 @@
     "seed:finance-dummy": "node scripts/seed-finance-dummy.mjs",
     "generate-secret": "node scripts/generate-secret.js",
     "repair:reconciliation-accounts": "node scripts/repair-reconciliation-accounts.mjs",
-    "clean": "rm -rf .svelte-kit node_modules/.vite"
+    "clean": "rm -rf .svelte-kit node_modules/.vite",
+    "backfill:konferens-2026q1": "node scripts/backfill-konferens-2026q1.mjs",
+    "backfill:income-apr-jul": "node scripts/backfill-income-2026-apr-jul.mjs",
+    "import:bank-books-2026": "node scripts/import-bank-books-2026.mjs"
   },
   "devDependencies": {
     "@lucide/svelte": "^0.515.0",

@@ -127,6 +127,14 @@
 						<p class="text-white font-medium text-sm">Expense Ledger</p>
 						<p class="text-white/50 text-xs mt-1">Pengajuan, approval, pembayaran</p>
 					</a>
+					<a href="/finance/backup" class="glass rounded-xl p-3 hover:bg-white/5 transition-colors">
+						<p class="text-white font-medium text-sm">Backup &amp; Restore</p>
+						<p class="text-white/50 text-xs mt-1">Unduh atau ganti database</p>
+					</a>
+					<a href="/finance/givers" class="glass rounded-xl p-3 hover:bg-white/5 transition-colors">
+						<p class="text-white font-medium text-sm">Konfirmasi Pemberi</p>
+						<p class="text-white/50 text-xs mt-1">Link pribadi untuk cek perpuluhan &amp; persembahan</p>
+					</a>
 					<a href="/finance/reports" class="glass rounded-xl p-3 hover:bg-white/5 transition-colors">
 						<p class="text-white font-medium text-sm">Reports</p>
 						<p class="text-white/50 text-xs mt-1">Ringkasan bulanan dan export</p>

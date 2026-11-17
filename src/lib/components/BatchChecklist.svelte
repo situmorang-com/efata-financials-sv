@@ -21,6 +21,8 @@
 	import ArrowRightLeft from '@lucide/svelte/icons/arrow-right-left';
 	import Bell from '@lucide/svelte/icons/bell';
 	import Banknote from '@lucide/svelte/icons/banknote';
+	import { DEFAULT_SOURCE_BANK, getTransferFee } from '$lib/transfer-fee.js';
+	import { searchShortcut, searchShortcutLabel } from '$lib/actions/search-shortcut.js';
 	import CircleDollarSign from '@lucide/svelte/icons/circle-dollar-sign';
 	import CalendarDays from '@lucide/svelte/icons/calendar-days';
 	import Download from '@lucide/svelte/icons/download';
@@ -39,7 +41,8 @@
 	let downloading = $state(false);
 	let isEditMode = $state(false);
 	let isSpecial = $derived(batch?.type === 'special');
-	let selectedSourceBank = $state<'mandiri' | 'bca'>('mandiri');
+	let selectedSourceBank = $state<'mandiri' | 'bca'>(DEFAULT_SOURCE_BANK);
+	const shortcutLabel = searchShortcutLabel();
 	let feeSaving = $state(false);
 	// Rows the user typed a fee into this session — recalc must not clobber them.
 	const manualFeeIds = new Set<number>();
@@ -81,7 +84,10 @@
 	let notifiedCount = $derived(items.filter(i => i.notify_status === 'sent').length);
 	let skippedNotifyCount = $derived(items.filter(i => i.notify_status === 'skipped').length);
 	let totalAmount = $derived(items.reduce((sum, i) => sum + i.amount, 0));
-	let totalTransferFee = $derived(items.reduce((sum, i) => sum + (i.transfer_fee || 0), 0));
+	// Cash is handed over in person, so it never carries a transfer fee.
+	let totalTransferFee = $derived(
+		items.filter((i) => !isCash(i)).reduce((sum, i) => sum + (i.transfer_fee || 0), 0)
+	);
 	let grandTotal = $derived(totalAmount + totalTransferFee);
 	let transferAmountPaidTotal = $derived(
 		items
@@ -159,14 +165,6 @@
 		if (!normalizedPhone) return null;
 		const code = sourceBank === 'bca' ? '3901' : '89508';
 		return `${code}${normalizedPhone}`;
-	}
-
-	function getTransferFee(sourceBank: 'mandiri' | 'bca', destBankName?: string | null): number {
-		const destBank = normalizeKeyPart(destBankName);
-		if (isDanaAccount(destBank)) return 1000;
-		if (sourceBank === 'mandiri' && destBank === 'mandiri') return 0;
-		if (sourceBank === 'bca' && destBank === 'bca') return 0;
-		return 2500;
 	}
 
 	// Recalculate every non-cash recipient's transfer fee from the selected
@@ -380,7 +378,11 @@
 		if (!ensureEditMode()) return;
 		const prevMethod = item.payment_method;
 		const prevFee = item.transfer_fee;
-		const nextFee = method === 'cash' ? 0 : item.transfer_fee;
+		// Cash: no fee. Back to transfer: fee from the selected source bank.
+		const nextFee =
+			method === 'cash'
+				? 0
+				: getTransferFee(selectedSourceBank, item.actual_bank_name || item.bank_name);
 		patchItem(item, { payment_method: method, transfer_fee: nextFee });
 		try {
 			const res = await fetch(`/api/batches/${batchId}/items/${item.id}`, {
@@ -789,18 +791,32 @@
 		}
 	}
 
+	/** Match the batch's recipients to membership dates for its month. */
 	async function populateBatch() {
 		if (!ensureEditMode()) return;
 		try {
-			await fetch(`/api/batches/${batchId}/populate`, {
+			const res = await fetch(`/api/batches/${batchId}/populate`, {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' }
 			});
-			addToast('Semua penerima berhasil ditambahkan', 'success');
+			const result = await res.json();
+			if (!res.ok) throw new Error(result?.error || 'Gagal menyinkronkan penerima');
+			const added: string[] = result.added ?? [];
+			const removed: string[] = result.removed ?? [];
+			const kept: string[] = result.kept ?? [];
+			if (added.length === 0 && removed.length === 0) {
+				addToast('Daftar penerima sudah sesuai', 'success');
+			} else {
+				if (added.length) addToast(`Ditambahkan: ${added.join(', ')}`, 'success');
+				if (removed.length) addToast(`Dikeluarkan: ${removed.join(', ')}`, 'info');
+			}
+			if (kept.length) {
+				addToast(`Sudah tidak aktif tapi sudah ditransfer/dikirim, tetap di batch: ${kept.join(', ')}`, 'info');
+			}
 			await loadData();
 		} catch (e) {
 			console.error('Failed to populate batch:', e);
-			addToast('Gagal mengisi penerima', 'error');
+			addToast(e instanceof Error ? e.message : 'Gagal menyinkronkan penerima', 'error');
 		}
 	}
 
@@ -906,14 +922,15 @@
 						<CalendarDays class="w-4 h-4" />
 						Attendance
 					</a>
-					{#if items.length === 0}
+					{#if items.length === 0 || isEditMode}
 						<button
 							onclick={populateBatch}
 							disabled={!isEditMode}
+							title="Samakan daftar dengan tanggal mulai/berhenti penerima untuk bulan batch ini"
 							class="glass-button rounded-full px-4 py-2 text-white text-sm font-semibold bg-emerald-500/25 hover:bg-emerald-500/40 flex items-center gap-1.5"
 						>
 							<UserPlus class="w-4 h-4" />
-							Isi Semua Penerima
+							{items.length === 0 ? 'Isi Semua Penerima' : 'Sinkronkan Penerima'}
 						</button>
 					{/if}
 					<button
@@ -1061,9 +1078,12 @@
 						<input
 							type="text"
 							bind:value={searchQuery}
+							use:searchShortcut={() => (searchQuery = '')}
 							placeholder="Cari nama atau bank..."
-							class="glass-input rounded-full pl-9 pr-4 py-2 text-white text-sm placeholder-white/30 w-full focus:outline-none focus:ring-2 focus:ring-white/20"
+							aria-keyshortcuts="/ Control+K Meta+K"
+							class="glass-input rounded-full pl-9 pr-14 py-2 text-white text-sm placeholder-white/30 w-full focus:outline-none focus:ring-2 focus:ring-white/20"
 						/>
+						<kbd class="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 hidden sm:inline-flex items-center rounded-md border border-white/15 bg-white/5 px-1.5 py-0.5 text-[10px] font-mono text-white/40">{shortcutLabel}</kbd>
 					</div>
 				</div>
 			</div>

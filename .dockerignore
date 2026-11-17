@@ -19,3 +19,9 @@ local.db
 docs
 PLAN.md
 README.md
+data
+reports
+efata account statement report
+recipients.xlsx
+*.db
+*.db-*

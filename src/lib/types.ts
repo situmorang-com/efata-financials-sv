@@ -17,6 +17,27 @@ export interface Recipient {
   updated_at: string;
   // Joined fields
   family_members?: string[]; // names of other family members in same group
+  // Latest membership period (YYYY-MM-DD, end inclusive, null = still a member)
+  start_date?: string | null;
+  end_date?: string | null;
+}
+
+/** One stint of membership; someone who leaves and comes back has several. */
+export interface RecipientPeriod {
+  id: number;
+  recipient_id: number;
+  start_date: string;
+  end_date: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+/** Names added to, removed from, or left in a batch by a sync. */
+export interface BatchSyncResult {
+  added: string[];
+  removed: string[];
+  /** Outside their membership dates but kept: already paid, notified or proven. */
+  kept: string[];
 }
 
 export interface Batch {
@@ -30,6 +51,8 @@ export interface Batch {
   zoom_single_rate: number;
   zoom_family_rate: number;
   status: "active" | "completed";
+  /** Month the batch pays for, YYYY-MM. */
+  period?: string | null;
   created_at: string;
   updated_at: string;
   total_items?: number;
@@ -136,10 +159,27 @@ export interface FinanceAccount {
   updated_at: string;
 }
 
+/**
+ * - tithe/offering/other_income: money received
+ * - expense: church spending
+ * - remittance: tithe and the Konferens share of offerings paid over to
+ *   Konferens (pass-through, not a church expense)
+ * - transfer: a move between the church's own accounts (cash deposit, pindah
+ *   buku, cash withdrawal) — one row leaving, one arriving; neither income nor
+ *   expense
+ */
+export type FinanceSubType =
+  | "tithe"
+  | "offering"
+  | "other_income"
+  | "expense"
+  | "remittance"
+  | "transfer";
+
 export interface FinanceTransaction {
   id?: number;
   type: "income" | "expense";
-  sub_type: "tithe" | "offering" | "other_income" | "expense";
+  sub_type: FinanceSubType;
   party_id?: number | null;
   category_id: number;
   account_id?: number | null;
@@ -160,6 +200,149 @@ export interface FinanceTransaction {
   source_account_number?: string | null;
   source_account_name?: string | null;
   source_account_bank_name?: string | null;
+}
+
+/** Book balance of an account set against its latest bank statement. */
+export type AccountBalance = {
+  account_id: number;
+  name: string;
+  account_type: FinanceAccount["account_type"];
+  account_number: string | null;
+  opening_balance: number;
+  inflow: number;
+  outflow: number;
+  book_balance: number;
+  as_of: string | null;
+  statement_date: string | null;
+  statement_balance: number | null;
+  unreconciled_lines: number;
+  unreconciled_amount: number;
+  difference: number | null;
+};
+
+/** Money held for and remitted to Konferens over a period. */
+export type KonferensPayable = {
+  date_from: string;
+  date_to: string;
+  opening: number;
+  tithe: number;
+  terpadu_konferens: number;
+  remitted: number;
+  closing: number;
+};
+
+export type GiverStatementStatus = "sent" | "opened" | "submitted" | "applied" | "superseded";
+
+/** A giver's private confirmation page (one per link). */
+export interface GiverStatement {
+  id: number;
+  giver_key: string;
+  giver_name: string;
+  token: string;
+  pin_hash: string;
+  period_from: string;
+  period_to: string;
+  status: GiverStatementStatus;
+  failed_attempts: number;
+  locked_until: string | null;
+  giver_note: string | null;
+  opened_at: string | null;
+  submitted_at: string | null;
+  applied_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+/** One bank transfer on a giver statement: the suggested split and the giver's answer. */
+export interface GiverStatementLine {
+  id: number;
+  statement_id: number;
+  bank_line_id: number;
+  txn_date: string;
+  amount: number;
+  remark: string | null;
+  account_label: string | null;
+  suggested_tithe: number;
+  suggested_offering: number;
+  suggested_special: number;
+  suggestion_source: string;
+  suggestion_detail: string | null;
+  tithe: number;
+  offering: number;
+  special: number;
+  not_mine: number;
+  note: string | null;
+  edited_at: string | null;
+}
+
+export type GiverLineSuggestion = {
+  tithe: number;
+  offering: number;
+  special: number;
+  source: string;
+  detail: string | null;
+};
+
+export type GiverSummary = {
+  giver_key: string;
+  giver_name: string;
+  line_count: number;
+  total: number;
+  unclassified: number;
+  first_date: string;
+  last_date: string;
+  statement: {
+    id: number;
+    token: string;
+    status: GiverStatementStatus;
+    created_at: string;
+    opened_at: string | null;
+    submitted_at: string | null;
+    applied_at: string | null;
+    changed_lines: number;
+  } | null;
+};
+
+export interface BoardApproval {
+  id?: number;
+  kind: "expense" | "decision" | "budget" | "policy" | "other";
+  title: string;
+  decision_date: string;
+  amount: number;
+  currency: string;
+  status: "pending" | "approved" | "superseded" | "rejected";
+  approvers: string;
+  whatsapp_context?: string | null;
+  notes?: string | null;
+  proof_filename?: string | null;
+  proof_original_name?: string | null;
+  proof_mime?: string | null;
+  proof_size?: number | null;
+  proof_sha256?: string | null;
+  created_by_email?: string | null;
+  updated_by_email?: string | null;
+  created_at: string;
+  updated_at: string;
+  vote_summary?: BoardApprovalVoteSummary;
+  user_vote?: BoardApprovalVote | null;
+  votes?: BoardApprovalVote[];
+}
+
+export interface BoardApprovalVote {
+  id?: number;
+  approval_id: number;
+  voter_email: string;
+  voter_name?: string | null;
+  vote: "agree" | "disagree";
+  comment?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface BoardApprovalVoteSummary {
+  agree: number;
+  disagree: number;
+  total: number;
 }
 
 export interface BankStatementImport {

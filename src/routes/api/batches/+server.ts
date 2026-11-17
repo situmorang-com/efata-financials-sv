@@ -1,5 +1,6 @@
 import { json } from "@sveltejs/kit";
 import { batchDb } from "$lib/server/db.js";
+import { isValidPeriod } from "$lib/membership.js";
 import type { RequestHandler } from "./$types.js";
 
 export const GET: RequestHandler = async () => {
@@ -27,6 +28,7 @@ export const POST: RequestHandler = async ({ request }) => {
       transport_rate: data.transport_rate,
       zoom_single_rate: data.zoom_single_rate,
       zoom_family_rate: data.zoom_family_rate,
+      period: isValidPeriod(data.period) ? data.period : undefined,
     });
     return json(batch, { status: 201 });
   } catch (error) {

@@ -14,9 +14,12 @@ export const GET: RequestHandler = async ({ url }) => {
         ? subType
         : undefined;
 
+    // Cash deposits and pindah buku are moves between the church's own
+    // accounts, not money received, so the ledger leaves them out.
     const items = financeTransactionDb.getAll({
       type: 'income',
       sub_type,
+      exclude_sub_types: sub_type ? undefined : ['transfer'],
       from,
       to,
       q

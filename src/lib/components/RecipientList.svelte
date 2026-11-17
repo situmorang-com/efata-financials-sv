@@ -13,25 +13,36 @@
 	import Search from '@lucide/svelte/icons/search';
 	import SearchX from '@lucide/svelte/icons/search-x';
 	import Pencil from '@lucide/svelte/icons/pencil';
-	import Trash2 from '@lucide/svelte/icons/trash-2';
 	import CreditCard from '@lucide/svelte/icons/credit-card';
 	import MessageCircle from '@lucide/svelte/icons/message-circle';
 	import X from '@lucide/svelte/icons/x';
 	import ChevronUp from '@lucide/svelte/icons/chevron-up';
 	import Video from '@lucide/svelte/icons/video';
 	import Users2 from '@lucide/svelte/icons/users-2';
+	import UserMinus from '@lucide/svelte/icons/user-minus';
+	import RotateCcw from '@lucide/svelte/icons/rotate-ccw';
+	import MembershipDialog from './MembershipDialog.svelte';
+	import type { BatchSyncResult } from '$lib/types.js';
+	import { formatMemberDate, membershipStatus } from '$lib/membership.js';
+	import { searchShortcut, searchShortcutLabel } from '$lib/actions/search-shortcut.js';
+	const shortcutLabel = searchShortcutLabel();
 
-	let recipients = $state<Recipient[]>([]);
+	// All recipients, including those whose membership has ended
+	let allRecipients = $state<Recipient[]>([]);
+	let view = $state<'active' | 'ended'>('active');
+	let recipients = $derived(allRecipients.filter(r => r.is_active));
+	let endedRecipients = $derived(allRecipients.filter(r => !r.is_active));
+	let shownRecipients = $derived(view === 'active' ? recipients : endedRecipients);
 	let searchQuery = $state('');
 	let filteredRecipients = $derived(
 		searchQuery
-			? recipients.filter(r =>
+			? shownRecipients.filter(r =>
 				r.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
 				(r.bank_name || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
 				(r.account_number || '').includes(searchQuery) ||
 				(r.keterangan || '').toLowerCase().includes(searchQuery.toLowerCase())
 			)
-			: recipients
+			: shownRecipients
 	);
 	let showForm = $state(false);
 	let editingRecipient = $state<Recipient | undefined>(undefined);
@@ -41,8 +52,8 @@
 
 	async function loadRecipients() {
 		try {
-			const res = await fetch('/api/recipients');
-			recipients = await res.json();
+			const res = await fetch('/api/recipients?include=ended');
+			allRecipients = await res.json();
 		} catch (e) {
 			console.error('Failed to load recipients:', e);
 		} finally {
@@ -50,47 +61,113 @@
 		}
 	}
 
+	/** Tell the user which open batches changed because of a membership change. */
+	function reportSync(sync: BatchSyncResult | undefined) {
+		if (!sync) return;
+		if (sync.added.length) addToast(`Ditambahkan ke batch: ${sync.added.join(', ')}`, 'info');
+		if (sync.removed.length) addToast(`Dikeluarkan dari batch: ${sync.removed.join(', ')}`, 'info');
+		if (sync.kept.length)
+			addToast(`Tetap di batch karena sudah ditransfer/dikirim: ${sync.kept.join(', ')}`, 'info');
+	}
+
+	async function send(url: string, method: string, body?: unknown) {
+		const res = await fetch(url, {
+			method,
+			headers: { 'Content-Type': 'application/json' },
+			body: body === undefined ? undefined : JSON.stringify(body)
+		});
+		const payload = await res.json().catch(() => ({}));
+		if (!res.ok) throw new Error(payload?.error || 'Permintaan gagal');
+		return payload;
+	}
+
 	async function handleSubmit(data: Partial<Recipient>) {
 		try {
 			if (editingRecipient) {
-				await fetch(`/api/recipients/${editingRecipient.id}`, {
-					method: 'PUT',
-					headers: { 'Content-Type': 'application/json' },
-					body: JSON.stringify(data)
-				});
+				const result = await send(`/api/recipients/${editingRecipient.id}`, 'PUT', data);
 				addToast(`${data.name} berhasil diperbarui`, 'success');
+				reportSync(result.sync);
 			} else {
-				await fetch('/api/recipients', {
-					method: 'POST',
-					headers: { 'Content-Type': 'application/json' },
-					body: JSON.stringify(data)
-				});
+				const result = await send('/api/recipients', 'POST', data);
 				addToast(`${data.name} berhasil ditambahkan`, 'success');
+				reportSync(result.sync);
 			}
 			showForm = false;
 			editingRecipient = undefined;
 			await loadRecipients();
 		} catch (e) {
 			console.error('Failed to save recipient:', e);
-			addToast('Gagal menyimpan penerima', 'error');
+			addToast(e instanceof Error ? e.message : 'Gagal menyimpan penerima', 'error');
 		}
 	}
 
-	async function handleDelete(id: number, name: string) {
+	// Membership dialog (end membership / rejoin)
+	let dialogOpen = $state(false);
+	let dialogMode = $state<'end' | 'rejoin'>('end');
+	let dialogRecipient = $state<Recipient | undefined>(undefined);
+	let dialogCanPurge = $state(false);
+
+	async function openEnd(r: Recipient) {
+		dialogRecipient = r;
+		dialogMode = 'end';
+		dialogCanPurge = false;
+		dialogOpen = true;
+		try {
+			const detail = await send(`/api/recipients/${r.id}`, 'GET');
+			dialogCanPurge = Boolean(detail.can_purge);
+		} catch {
+			// Purge stays hidden; ending membership still works
+		}
+	}
+
+	function openRejoin(r: Recipient) {
+		dialogRecipient = r;
+		dialogMode = 'rejoin';
+		dialogCanPurge = false;
+		dialogOpen = true;
+	}
+
+	async function confirmMembership(date: string) {
+		const r = dialogRecipient;
+		if (!r) return;
+		try {
+			if (dialogMode === 'end') {
+				const result = await send(`/api/recipients/${r.id}/end`, 'POST', { end_date: date });
+				addToast(`${r.name} dinonaktifkan per ${formatMemberDate(date)}`, 'success');
+				reportSync(result.sync);
+				await loadRecipients();
+			} else {
+				const result = await send(`/api/recipients/${r.id}/rejoin`, 'POST', { start_date: date });
+				addToast(`${r.name} aktif kembali mulai ${formatMemberDate(date)}. Cek lagi rekening & WhatsApp.`, 'success');
+				reportSync(result.sync);
+				await loadRecipients();
+				// Details may have changed while they were away: open the form to check
+				view = 'active';
+				startEdit(result as Recipient);
+			}
+		} catch (e) {
+			console.error('Failed to update membership:', e);
+			addToast(e instanceof Error ? e.message : 'Gagal menyimpan', 'error');
+		}
+	}
+
+	async function purgeRecipient() {
+		const r = dialogRecipient;
+		if (!r) return;
 		const confirmed = await confirmDialog({
-			title: 'Hapus Penerima',
-			description: `"${name}" akan dihapus dari daftar penerima. Aksi ini tidak bisa dibatalkan.`,
+			title: 'Hapus Permanen',
+			description: `"${r.name}" dan barisnya di batch yang belum diproses akan dihapus permanen. Aksi ini tidak bisa dibatalkan.`,
 			confirmLabel: 'Hapus',
 			variant: 'danger'
 		});
 		if (!confirmed) return;
 		try {
-			await fetch(`/api/recipients/${id}`, { method: 'DELETE' });
-			addToast(`${name} berhasil dihapus`, 'success');
+			await send(`/api/recipients/${r.id}`, 'DELETE');
+			addToast(`${r.name} dihapus`, 'success');
 			await loadRecipients();
 		} catch (e) {
 			console.error('Failed to delete recipient:', e);
-			addToast('Gagal menghapus penerima', 'error');
+			addToast(e instanceof Error ? e.message : 'Gagal menghapus penerima', 'error');
 		}
 	}
 
@@ -113,7 +190,7 @@
 	<div class="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4 mb-6 fade-up">
 		<div>
 			<h1 class="text-2xl font-bold text-white glow-text brand-font">Daftar Penerima</h1>
-			<p class="text-white/60 text-sm mt-1">{recipients.length} penerima terdaftar &middot; {filteredRecipients.length} tampil</p>
+			<p class="text-white/60 text-sm mt-1">{recipients.length} penerima aktif &middot; {endedRecipients.length} tidak aktif &middot; {filteredRecipients.length} tampil</p>
 		</div>
 		<div class="flex gap-3 w-full lg:w-auto">
 			<div class="relative flex-1 sm:w-64">
@@ -121,9 +198,12 @@
 				<input
 					type="text"
 					bind:value={searchQuery}
+					use:searchShortcut={() => (searchQuery = '')}
+					aria-keyshortcuts="/ Control+K Meta+K"
 					placeholder="Cari nama, bank, rekening..."
-					class="w-full glass-input rounded-xl pl-9 pr-4 py-2 text-white text-sm placeholder-white/30 focus:outline-none focus:ring-2 focus:ring-white/20"
+					class="w-full glass-input rounded-xl pl-9 pr-14 py-2 text-white text-sm placeholder-white/30 focus:outline-none focus:ring-2 focus:ring-white/20"
 				/>
+				<kbd class="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 hidden sm:inline-flex items-center rounded-md border border-white/15 bg-white/5 px-1.5 py-0.5 text-[10px] font-mono text-white/40">{shortcutLabel}</kbd>
 			</div>
 			<button
 				onclick={() => { if (showForm) { showForm = false; editingRecipient = undefined; } else { editingRecipient = undefined; showForm = true; } }}
@@ -150,7 +230,7 @@
 			<div class="glass-card rounded-2xl p-4 lift-on-hover">
 				<div class="flex items-center gap-2 mb-1">
 					<UsersIcon class="w-3.5 h-3.5 text-white/50" />
-					<p class="text-white/60 text-xs uppercase tracking-wider">Total Penerima</p>
+					<p class="text-white/60 text-xs uppercase tracking-wider">Penerima Aktif</p>
 				</div>
 				<p class="text-2xl font-bold text-white mt-1">{recipients.length}</p>
 			</div>
@@ -193,11 +273,26 @@
 			</div>
 		{/if}
 
+		<div class="flex gap-2 mb-4">
+			<button
+				onclick={() => (view = 'active')}
+				class="nav-pill {view === 'active' ? 'nav-pill-active' : ''}"
+			>
+				Aktif ({recipients.length})
+			</button>
+			<button
+				onclick={() => (view = 'ended')}
+				class="nav-pill {view === 'ended' ? 'nav-pill-active' : ''}"
+			>
+				Tidak Aktif ({endedRecipients.length})
+			</button>
+		</div>
+
 		{#if filteredRecipients.length === 0}
 			<EmptyState
 				icon={SearchX}
-				title="Tidak ada data yang cocok"
-				description="Coba ubah kata kunci pencarian."
+				title={searchQuery ? 'Tidak ada data yang cocok' : view === 'ended' ? 'Belum ada penerima yang berhenti' : 'Belum ada penerima aktif'}
+				description={searchQuery ? 'Coba ubah kata kunci pencarian.' : ''}
 			/>
 		{:else}
 			<!-- Desktop Table (hidden on mobile) -->
@@ -212,6 +307,7 @@
 								<th class="text-left px-4 py-3 table-head-cell">No. Rekening</th>
 								<th class="text-left px-4 py-3 table-head-cell">WhatsApp</th>
 								<th class="text-center px-4 py-3 table-head-cell">Zoom</th>
+								<th class="text-left px-4 py-3 table-head-cell">Keanggotaan</th>
 								<th class="text-left px-4 py-3 table-head-cell">Catatan</th>
 								<th class="text-right px-4 py-3 table-head-cell">Aksi</th>
 							</tr>
@@ -241,6 +337,7 @@
 											<span class="text-white/30 text-xs">—</span>
 										{/if}
 									</td>
+									<td class="px-4 py-3 text-sm whitespace-nowrap">{@render membership(r)}</td>
 									<td class="px-4 py-3 text-sm">
 										{#if r.transfer_to_name}
 											<span class="text-amber-200/80">→ {r.transfer_to_name}</span>
@@ -259,13 +356,23 @@
 											>
 												<Pencil class="w-4 h-4" />
 											</button>
-											<button
-												onclick={() => handleDelete(r.id!, r.name)}
-												class="text-white/30 hover:text-red-300 transition-colors p-1.5 rounded-lg hover:bg-red-500/10"
-												title="Hapus"
-											>
-												<Trash2 class="w-4 h-4" />
-											</button>
+											{#if r.is_active}
+												<button
+													onclick={() => openEnd(r)}
+													class="text-white/30 hover:text-amber-300 transition-colors p-1.5 rounded-lg hover:bg-amber-500/10"
+													title="Nonaktifkan"
+												>
+													<UserMinus class="w-4 h-4" />
+												</button>
+											{:else}
+												<button
+													onclick={() => openRejoin(r)}
+													class="text-white/30 hover:text-emerald-300 transition-colors p-1.5 rounded-lg hover:bg-emerald-500/10"
+													title="Aktifkan kembali"
+												>
+													<RotateCcw class="w-4 h-4" />
+												</button>
+											{/if}
 										</div>
 									</td>
 								</tr>
@@ -299,6 +406,7 @@
 									{/if}
 								</div>
 								<div class="mt-1.5 ml-5 space-y-0.5">
+									<p class="text-xs">{@render membership(r)}</p>
 									{#if r.bank_name}
 										<p class="text-white/60 text-xs">{r.bank_name} &middot; <span class="font-mono">{r.account_number || '-'}</span></p>
 									{/if}
@@ -320,13 +428,23 @@
 								>
 									<Pencil class="w-4 h-4" />
 								</button>
-								<button
-									onclick={() => handleDelete(r.id!, r.name)}
-									class="text-white/30 hover:text-red-300 transition-colors p-2 rounded-lg hover:bg-red-500/10"
-									title="Hapus"
-								>
-									<Trash2 class="w-4 h-4" />
-								</button>
+								{#if r.is_active}
+									<button
+										onclick={() => openEnd(r)}
+										class="text-white/30 hover:text-amber-300 transition-colors p-2 rounded-lg hover:bg-amber-500/10"
+										title="Nonaktifkan"
+									>
+										<UserMinus class="w-4 h-4" />
+									</button>
+								{:else}
+									<button
+										onclick={() => openRejoin(r)}
+										class="text-white/30 hover:text-emerald-300 transition-colors p-2 rounded-lg hover:bg-emerald-500/10"
+										title="Aktifkan kembali"
+									>
+										<RotateCcw class="w-4 h-4" />
+									</button>
+								{/if}
 							</div>
 						</div>
 					</div>
@@ -335,3 +453,33 @@
 		{/if}
 	{/if}
 </div>
+
+{#snippet membership(r: Recipient)}
+	{@const status = membershipStatus(r.start_date, r.end_date)}
+	{#if status === 'ended'}
+		<span class="text-white/50">{formatMemberDate(r.start_date)} – {formatMemberDate(r.end_date)}</span>
+	{:else if status === 'upcoming'}
+		<span class="inline-flex items-center text-xs px-2 py-0.5 rounded-full bg-sky-500/15 text-sky-200 border border-sky-500/25">
+			Mulai {formatMemberDate(r.start_date)}
+		</span>
+	{:else if status === 'ending'}
+		<span class="inline-flex items-center text-xs px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-200 border border-amber-500/25">
+			Sampai {formatMemberDate(r.end_date)}
+		</span>
+	{:else}
+		<span class="text-white/60">Sejak {formatMemberDate(r.start_date)}</span>
+	{/if}
+{/snippet}
+
+{#if dialogRecipient}
+	<MembershipDialog
+		bind:open={dialogOpen}
+		mode={dialogMode}
+		name={dialogRecipient.name}
+		startDate={dialogRecipient.start_date}
+		endDate={dialogRecipient.end_date}
+		canPurge={dialogCanPurge}
+		onConfirm={confirmMembership}
+		onPurge={purgeRecipient}
+	/>
+{/if}

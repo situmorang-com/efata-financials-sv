@@ -1,5 +1,5 @@
 <script lang="ts">
-	import type { FinanceAccount } from '$lib/types.js';
+	import type { AccountBalance, FinanceAccount } from '$lib/types.js';
 	import { formatRupiah } from '$lib/format.js';
 	import { addToast } from '$lib/stores/toast.svelte.js';
 	import Breadcrumbs from '$lib/components/Breadcrumbs.svelte';
@@ -18,6 +18,7 @@
 	let editingId = $state<number | null>(null);
 	let showModal = $state(false);
 	let accounts = $state<FinanceAccount[]>([]);
+	let balances = $state<Record<number, AccountBalance>>({});
 	let search = $state('');
 	let filterType = $state<'all' | FinanceAccount['account_type']>('all');
 
@@ -78,6 +79,11 @@
 		resetForm();
 	}
 
+	function dateLabel(value: string): string {
+		const d = new Date(`${value.slice(0, 10)}T00:00:00`);
+		return d.toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' });
+	}
+
 	function accountTypeLabel(type: FinanceAccount['account_type']) {
 		if (type === 'cash') return 'Cash';
 		if (type === 'bank') return 'Bank';
@@ -88,9 +94,16 @@
 	async function loadAccounts() {
 		loading = true;
 		try {
-			const res = await fetch('/api/finance/accounts');
+			const [res, balRes] = await Promise.all([
+				fetch('/api/finance/accounts'),
+				fetch('/api/finance/accounts/balances')
+			]);
 			if (!res.ok) throw new Error('failed');
 			accounts = await res.json();
+			if (balRes.ok) {
+				const rows: AccountBalance[] = await balRes.json();
+				balances = Object.fromEntries(rows.map((b) => [b.account_id, b]));
+			}
 		} catch (error) {
 			console.error('Failed to load finance accounts:', error);
 			addToast('Gagal memuat akun internal', 'error');
@@ -275,6 +288,45 @@
 							<p class="text-white/85 text-sm mt-1 break-all">{account.account_number || 'Belum diisi'}</p>
 						</div>
 					</div>
+
+					{#if account.id && balances[account.id]}
+						{@const bal = balances[account.id]}
+						<div class="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-3">
+							<div class="glass rounded-2xl px-4 py-3 border border-white/8">
+								<p class="text-white/40 text-[10px] uppercase tracking-[0.14em]">Saldo Buku{bal.as_of ? ` per ${dateLabel(bal.as_of)}` : ''}</p>
+								<p class="text-white text-sm mt-1 font-semibold">{formatRupiah(bal.book_balance)}</p>
+								<p class="text-white/40 text-[11px] mt-0.5">+{formatRupiah(bal.inflow)} / −{formatRupiah(bal.outflow)}</p>
+							</div>
+							{#if bal.statement_balance !== null}
+								<div class="glass rounded-2xl px-4 py-3 border border-white/8">
+									<p class="text-white/40 text-[10px] uppercase tracking-[0.14em]">Rekening Koran {bal.statement_date ? dateLabel(bal.statement_date) : ''}</p>
+									<p class="text-sky-200 text-sm mt-1 font-semibold">{formatRupiah(Math.round(bal.statement_balance))}</p>
+									{#if bal.unreconciled_lines > 0}
+										<a href="/finance/reconciliation" class="text-amber-200/90 text-[11px] mt-0.5 block hover:underline">
+											{bal.unreconciled_lines} baris belum direkonsiliasi ({formatRupiah(Math.round(bal.unreconciled_amount))})
+										</a>
+									{:else}
+										<p class="text-emerald-200/80 text-[11px] mt-0.5">Semua baris direkonsiliasi</p>
+									{/if}
+								</div>
+								<div class="glass rounded-2xl px-4 py-3 border {Math.abs(bal.difference ?? 0) < 1 ? 'border-emerald-400/20' : 'border-rose-400/30'}">
+									<p class="text-white/40 text-[10px] uppercase tracking-[0.14em]">Selisih</p>
+									{#if Math.abs(bal.difference ?? 0) < 1}
+										<p class="text-emerald-200 text-sm mt-1 font-semibold">Cocok</p>
+										<p class="text-white/40 text-[11px] mt-0.5">buku + belum rekon = bank</p>
+									{:else}
+										<p class="text-rose-200 text-sm mt-1 font-semibold">{formatRupiah(Math.round(bal.difference ?? 0))}</p>
+										<p class="text-white/40 text-[11px] mt-0.5">bank − (buku + belum rekon)</p>
+									{/if}
+								</div>
+							{:else}
+								<div class="glass rounded-2xl px-4 py-3 border border-white/8 sm:col-span-2">
+									<p class="text-white/40 text-[10px] uppercase tracking-[0.14em]">Kas Fisik</p>
+									<p class="text-white/70 text-[12px] mt-1">Tidak ada rekening koran. Hitung uang tunai dan cocokkan dengan saldo buku.</p>
+								</div>
+							{/if}
+						</div>
+					{/if}
 				</div>
 			{/each}
 		</div>

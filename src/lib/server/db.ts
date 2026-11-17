@@ -6,11 +6,22 @@ import {
   writeFileSync,
   readFileSync,
   unlinkSync,
+  readdirSync,
+  statSync,
 } from "fs";
 import { createHash } from "crypto";
+import {
+  jakartaDate,
+  periodFromBatchName,
+  periodBounds,
+  todayJakarta,
+} from "$lib/membership";
+import { DEFAULT_SOURCE_BANK, getTransferFee } from "$lib/transfer-fee";
 import { join } from "path";
 import type {
   Recipient,
+  RecipientPeriod,
+  BatchSyncResult,
   Batch,
   BatchItem,
   AttendanceRecord,
@@ -20,12 +31,36 @@ import type {
   FinanceParty,
   FinanceAccount,
   FinanceTransaction,
+  FinanceSubType,
+  AccountBalance,
+  KonferensPayable,
   BoardApproval,
   BoardApprovalVote,
   BoardApprovalVoteSummary,
 } from "$lib/types.js";
 import { calculateAmount } from "$lib/types.js";
 import { seedRecipients } from "./seed.js";
+import { applyKonferensSchema } from "./konferens-schema.js";
+import { applyGiverSchema, createGiverStatementDb } from "./giver-statements.js";
+import { env } from "$env/dynamic/private";
+import {
+  allocateReceipt,
+  countGivingUnits,
+  crossFoot,
+  findReceiptNumberGaps,
+  normalizeGiverName,
+  validateReceiptAllocations,
+  splitTerpadu,
+  KONFERENS_BUCKETS,
+} from "./konferens-allocation.js";
+import type {
+  Allocation,
+  AllocationBucket,
+  CrossFootResult,
+  GiverLine,
+  GivingUnitCounts,
+  ReceiptKind,
+} from "./konferens-allocation.js";
 
 // Proof image file storage
 const DATA_DIR = join(process.cwd(), "data");
@@ -111,6 +146,9 @@ const db = new Database(DB_PATH);
 
 // Enable WAL mode for better concurrent access
 db.pragma("journal_mode = WAL");
+
+// Checkpoint and close on graceful shutdown so a redeploy never leaves a -wal behind.
+process.once("sveltekit:shutdown", () => db.close());
 
 // Create tables
 db.exec(`
@@ -375,6 +413,7 @@ db.exec(`
     FOREIGN KEY (txn_id) REFERENCES transactions(id)
   )
 `);
+
 
 db.exec(
   `CREATE INDEX IF NOT EXISTS idx_transactions_type_date ON transactions(type, txn_date)`,
@@ -680,6 +719,12 @@ db.exec(
 );
 remapReconciliationData();
 
+// --- Laporan Konferens: schema, seed and column migration ---
+applyKonferensSchema(db);
+
+// --- Giver statements: private confirmation pages per giver ---
+applyGiverSchema(db);
+
 // Recipients migrations
 if (!columnExists("recipients", "family_group_id")) {
   db.exec("ALTER TABLE recipients ADD COLUMN family_group_id INTEGER");
@@ -688,6 +733,74 @@ if (!columnExists("recipients", "zoom_eligible")) {
   db.exec(
     "ALTER TABLE recipients ADD COLUMN zoom_eligible INTEGER NOT NULL DEFAULT 1",
   );
+}
+
+// Batch period (YYYY-MM): which month a batch pays for. Membership dates are
+// compared against it to decide who belongs in the batch.
+if (!columnExists("batches", "period")) {
+  db.exec("ALTER TABLE batches ADD COLUMN period TEXT");
+  const rows = db
+    .prepare("SELECT id, name, created_at FROM batches")
+    .all() as { id: number; name: string; created_at: string }[];
+  const setPeriod = db.prepare("UPDATE batches SET period = ? WHERE id = ?");
+  for (const row of rows) {
+    setPeriod.run(
+      periodFromBatchName(row.name) ?? jakartaDate(new Date(row.created_at)).slice(0, 7),
+      row.id,
+    );
+  }
+}
+
+// Recipient membership periods: one row per stint (start_date..end_date,
+// inclusive, YYYY-MM-DD). A person who leaves gets an end_date; when they come
+// back a new row is added, so earlier months keep their history.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS recipient_periods (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    recipient_id INTEGER NOT NULL,
+    start_date TEXT NOT NULL,
+    end_date TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY (recipient_id) REFERENCES recipients(id) ON DELETE CASCADE
+  )
+`);
+db.exec(
+  "CREATE INDEX IF NOT EXISTS idx_recipient_periods_recipient ON recipient_periods(recipient_id, start_date)",
+);
+{
+  const missing = db
+    .prepare(
+      `SELECT r.id, r.is_active, r.created_at, r.updated_at,
+         (SELECT MIN(b.period) FROM batch_items bi JOIN batches b ON b.id = bi.batch_id
+           WHERE bi.recipient_id = r.id) AS first_period
+       FROM recipients r
+       WHERE NOT EXISTS (SELECT 1 FROM recipient_periods p WHERE p.recipient_id = r.id)`,
+    )
+    .all() as {
+    id: number;
+    is_active: number;
+    created_at: string;
+    updated_at: string;
+    first_period: string | null;
+  }[];
+  if (missing.length > 0) {
+    const now = new Date().toISOString();
+    const insert = db.prepare(
+      "INSERT INTO recipient_periods (recipient_id, start_date, end_date, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+    );
+    db.transaction(() => {
+      for (const r of missing) {
+        const created = jakartaDate(new Date(r.created_at));
+        const start =
+          r.first_period && `${r.first_period}-01` < created
+            ? `${r.first_period}-01`
+            : created;
+        const end = r.is_active ? null : jakartaDate(new Date(r.updated_at));
+        insert.run(r.id, start, end && end < start ? start : end, now, now);
+      }
+    })();
+  }
 }
 
 // Batches migrations
@@ -792,37 +905,97 @@ const updateRecipient = db.prepare(`
   WHERE id = ?
 `);
 
-const selectAllRecipients = db.prepare(`
-  SELECT r.*, rt.name as transfer_to_name
+// Every recipient read carries its latest membership period (start/end date).
+const RECIPIENT_SELECT = `
+  SELECT r.*, rt.name as transfer_to_name,
+    p.start_date AS start_date, p.end_date AS end_date
   FROM recipients r
   LEFT JOIN recipients rt ON r.transfer_to_id = rt.id
+  LEFT JOIN recipient_periods p ON p.id = (
+    SELECT lp.id FROM recipient_periods lp
+    WHERE lp.recipient_id = r.id
+    ORDER BY lp.start_date DESC, lp.id DESC LIMIT 1
+  )
+`;
+
+const selectAllRecipients = db.prepare(`
+  ${RECIPIENT_SELECT}
   WHERE r.is_active = 1
   ORDER BY r.name
 `);
 
+const selectAllRecipientsIncludingEnded = db.prepare(`
+  ${RECIPIENT_SELECT}
+  ORDER BY r.is_active DESC, r.name
+`);
+
 const selectRecipientById = db.prepare(`
-  SELECT r.*, rt.name as transfer_to_name
-  FROM recipients r
-  LEFT JOIN recipients rt ON r.transfer_to_id = rt.id
+  ${RECIPIENT_SELECT}
   WHERE r.id = ?
 `);
 
 const searchRecipients = db.prepare(`
-  SELECT r.*, rt.name as transfer_to_name
-  FROM recipients r
-  LEFT JOIN recipients rt ON r.transfer_to_id = rt.id
+  ${RECIPIENT_SELECT}
   WHERE r.is_active = 1 AND (r.name LIKE ? OR r.bank_name LIKE ? OR r.account_number LIKE ? OR r.keterangan LIKE ?)
+  ORDER BY r.name
+`);
+
+const selectLatestPeriod = db.prepare(`
+  SELECT * FROM recipient_periods
+  WHERE recipient_id = ?
+  ORDER BY start_date DESC, id DESC LIMIT 1
+`);
+
+const selectPeriodsByRecipient = db.prepare(`
+  SELECT * FROM recipient_periods
+  WHERE recipient_id = ?
+  ORDER BY start_date, id
+`);
+
+const insertPeriod = db.prepare(`
+  INSERT INTO recipient_periods (recipient_id, start_date, end_date, created_at, updated_at)
+  VALUES (?, ?, ?, ?, ?)
+`);
+
+const updatePeriodDates = db.prepare(`
+  UPDATE recipient_periods SET start_date = ?, end_date = ?, updated_at = ? WHERE id = ?
+`);
+
+// is_active mirrors the periods: 1 while a period has not ended yet (including
+// one that starts in the future), 0 once every period is over.
+const refreshActiveFlags = db.prepare(`
+  UPDATE recipients SET is_active = CASE WHEN EXISTS (
+    SELECT 1 FROM recipient_periods p
+    WHERE p.recipient_id = recipients.id AND (p.end_date IS NULL OR p.end_date >= ?)
+  ) THEN 1 ELSE 0 END
+  WHERE is_active != CASE WHEN EXISTS (
+    SELECT 1 FROM recipient_periods p
+    WHERE p.recipient_id = recipients.id AND (p.end_date IS NULL OR p.end_date >= ?)
+  ) THEN 1 ELSE 0 END
+`);
+
+function refreshRecipientActive(): void {
+  const today = todayJakarta();
+  refreshActiveFlags.run(today, today);
+}
+
+const selectRecipientsForPeriod = db.prepare(`
+  SELECT DISTINCT r.*, COALESCE(rt.bank_name, r.bank_name) AS actual_bank_name
+  FROM recipients r
+  JOIN recipient_periods p ON p.recipient_id = r.id
+  LEFT JOIN recipients rt ON r.transfer_to_id = rt.id
+  WHERE p.start_date <= ? AND (p.end_date IS NULL OR p.end_date >= ?)
   ORDER BY r.name
 `);
 
 // --- Prepared statements - Batches ---
 const insertBatch = db.prepare(`
-  INSERT INTO batches (type, name, description, default_amount, total_saturdays, transport_rate, zoom_single_rate, zoom_family_rate, status, created_at, updated_at)
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  INSERT INTO batches (type, name, description, default_amount, total_saturdays, transport_rate, zoom_single_rate, zoom_family_rate, status, period, created_at, updated_at)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `);
 
 const updateBatch = db.prepare(`
-  UPDATE batches SET type = ?, name = ?, description = ?, default_amount = ?, total_saturdays = ?, transport_rate = ?, zoom_single_rate = ?, zoom_family_rate = ?, status = ?, updated_at = ?
+  UPDATE batches SET type = ?, name = ?, description = ?, default_amount = ?, total_saturdays = ?, transport_rate = ?, zoom_single_rate = ?, zoom_family_rate = ?, status = ?, period = ?, updated_at = ?
   WHERE id = ?
 `);
 
@@ -946,7 +1119,24 @@ const selectBatchItemAttendanceByRecipient = db.prepare(`
 // --- Database access objects ---
 export const recipientDb = {
   getAll: (): Recipient[] => {
+    refreshRecipientActive();
     return selectAllRecipients.all() as Recipient[];
+  },
+
+  /** Active and ended recipients, for the recipients page. */
+  getAllIncludingEnded: (): Recipient[] => {
+    refreshRecipientActive();
+    return selectAllRecipientsIncludingEnded.all() as Recipient[];
+  },
+
+  getPeriods: (id: number): RecipientPeriod[] => {
+    return selectPeriodsByRecipient.all(id) as RecipientPeriod[];
+  },
+
+  /** Recipients with a membership period overlapping the YYYY-MM month. */
+  getForPeriod: (period: string): Recipient[] => {
+    const { first, last } = periodBounds(period);
+    return selectRecipientsForPeriod.all(last, first) as Recipient[];
   },
 
   getById: (id: number): Recipient | undefined => {
@@ -973,12 +1163,16 @@ export const recipientDb = {
       now,
       now,
     );
-    return {
-      id: result.lastInsertRowid as number,
-      ...recipient,
-      created_at: now,
-      updated_at: now,
-    };
+    const id = result.lastInsertRowid as number;
+    insertPeriod.run(
+      id,
+      recipient.start_date || todayJakarta(),
+      recipient.end_date || null,
+      now,
+      now,
+    );
+    refreshRecipientActive();
+    return selectRecipientById.get(id) as Recipient;
   },
 
   update: (id: number, data: Partial<Recipient>): boolean => {
@@ -1002,14 +1196,104 @@ export const recipientDb = {
     return result.changes > 0;
   },
 
-  softDelete: (id: number): boolean => {
+  /**
+   * Change the dates of the latest membership period. Throws when the dates
+   * are inconsistent or overlap the previous period.
+   */
+  setLatestPeriodDates: (
+    id: number,
+    startDate: string,
+    endDate: string | null,
+  ): void => {
+    const latest = selectLatestPeriod.get(id) as RecipientPeriod | undefined;
+    if (!latest) throw new Error("Penerima tidak punya periode keanggotaan");
+    if (endDate && endDate < startDate) {
+      throw new Error("Tanggal berhenti tidak boleh sebelum tanggal mulai");
+    }
+    const previous = (selectPeriodsByRecipient.all(id) as RecipientPeriod[])
+      .filter((p) => p.id !== latest.id)
+      .pop();
+    if (previous?.end_date && startDate <= previous.end_date) {
+      throw new Error(
+        `Tanggal mulai harus setelah periode sebelumnya berakhir (${previous.end_date})`,
+      );
+    }
+    updatePeriodDates.run(
+      startDate,
+      endDate,
+      new Date().toISOString(),
+      latest.id,
+    );
+    refreshRecipientActive();
+  },
+
+  /** End the current membership period on endDate (inclusive). */
+  endMembership: (id: number, endDate: string): void => {
+    const latest = selectLatestPeriod.get(id) as RecipientPeriod | undefined;
+    if (!latest) throw new Error("Penerima tidak punya periode keanggotaan");
+    if (endDate < latest.start_date) {
+      throw new Error(
+        `Tanggal berhenti tidak boleh sebelum tanggal mulai (${latest.start_date})`,
+      );
+    }
+    updatePeriodDates.run(
+      latest.start_date,
+      endDate,
+      new Date().toISOString(),
+      latest.id,
+    );
+    refreshRecipientActive();
+  },
+
+  /** Start a new membership period for someone who left and came back. */
+  rejoin: (id: number, startDate: string): void => {
+    const latest = selectLatestPeriod.get(id) as RecipientPeriod | undefined;
+    if (latest && !latest.end_date) {
+      throw new Error("Penerima ini masih aktif");
+    }
+    if (latest?.end_date && startDate <= latest.end_date) {
+      throw new Error(
+        `Tanggal mulai harus setelah tanggal berhenti terakhir (${latest.end_date})`,
+      );
+    }
     const now = new Date().toISOString();
-    const result = db
+    insertPeriod.run(id, startDate, null, now, now);
+    refreshRecipientActive();
+  },
+
+  /**
+   * Whether the recipient can be removed for good (an entry made by mistake):
+   * nothing was ever transferred, notified or proven for them, and nobody
+   * routes their transfer through them.
+   */
+  canPurge: (id: number): boolean => {
+    const used = db
       .prepare(
-        "UPDATE recipients SET is_active = 0, updated_at = ? WHERE id = ?",
+        `SELECT
+           (SELECT COUNT(*) FROM batch_items WHERE recipient_id = ?
+              AND (transfer_status != 'pending' OR notify_status != 'pending'
+                   OR (transfer_proof IS NOT NULL AND transfer_proof != ''))) AS paid,
+           (SELECT COUNT(*) FROM recipients WHERE transfer_to_id = ? AND id != ?) AS routed`,
       )
-      .run(now, id);
-    return result.changes > 0;
+      .get(id, id, id) as { paid: number; routed: number };
+    return used.paid === 0 && used.routed === 0;
+  },
+
+  /** Delete a recipient entered by mistake, with their untouched batch rows. */
+  purge: (id: number): number[] => {
+    const batchIds = (
+      db
+        .prepare("SELECT DISTINCT batch_id FROM batch_items WHERE recipient_id = ?")
+        .all(id) as { batch_id: number }[]
+    ).map((r) => r.batch_id);
+    db.transaction(() => {
+      db.prepare("DELETE FROM attendance_records WHERE recipient_id = ?").run(id);
+      db.prepare("DELETE FROM batch_items WHERE recipient_id = ?").run(id);
+      db.prepare("DELETE FROM recipient_periods WHERE recipient_id = ?").run(id);
+      db.prepare("DELETE FROM recipients WHERE id = ?").run(id);
+    })();
+    for (const batchId of batchIds) syncBatchTransferExpense(batchId);
+    return batchIds;
   },
 
   search: (query: string): Recipient[] => {
@@ -1077,6 +1361,7 @@ export const batchDb = {
     transport_rate?: number;
     zoom_single_rate?: number;
     zoom_family_rate?: number;
+    period?: string;
   }): Batch => {
     const now = new Date().toISOString();
     const type = batch.type ?? "monthly";
@@ -1084,6 +1369,10 @@ export const batchDb = {
     const tRate = batch.transport_rate ?? 25000;
     const zSingle = batch.zoom_single_rate ?? 50000;
     const zFamily = batch.zoom_family_rate ?? 30000;
+    const period =
+      batch.period ||
+      periodFromBatchName(batch.name) ||
+      todayJakarta().slice(0, 7);
     const defaultAmt =
       type === "special"
         ? (batch.default_amount ?? 0)
@@ -1098,6 +1387,7 @@ export const batchDb = {
       zSingle,
       zFamily,
       "active",
+      period,
       now,
       now,
     );
@@ -1112,6 +1402,7 @@ export const batchDb = {
       zoom_single_rate: zSingle,
       zoom_family_rate: zFamily,
       status: "active",
+      period,
       created_at: now,
       updated_at: now,
       total_items: 0,
@@ -1135,6 +1426,7 @@ export const batchDb = {
       updated.zoom_single_rate,
       updated.zoom_family_rate,
       updated.status,
+      updated.period ?? null,
       now,
       id,
     );
@@ -1212,6 +1504,14 @@ function voidLegacyPerItemTransferExpenses(batchId: number): void {
   ).run(now, batchId);
 }
 
+/**
+ * Transport batches are paid out by the treasurer from cash the church
+ * advances to her (cheques / withdrawals booked as transfers into Kas Gereja),
+ * so batch expenses come out of Kas Gereja. Without an account they would sit
+ * in no balance and the advance would look like an expense of its own.
+ */
+const KAS_ACCOUNT_SQL = "(SELECT id FROM accounts WHERE name = 'Kas Gereja' AND is_active = 1 LIMIT 1)";
+
 function upsertExpenseTransaction(
   ref: string,
   categoryId: number,
@@ -1239,7 +1539,8 @@ function upsertExpenseTransaction(
   if (existing?.id) {
     db.prepare(
       `UPDATE transactions
-       SET type = 'expense', sub_type = 'expense', category_id = ?, amount = ?, txn_date = ?, payment_method = 'transfer', service_label = ?, status = 'posted', notes = ?, updated_at = ?
+       SET type = 'expense', sub_type = 'expense', category_id = ?, account_id = COALESCE(account_id, ${KAS_ACCOUNT_SQL}),
+           amount = ?, txn_date = ?, payment_method = 'transfer', service_label = ?, status = 'posted', notes = ?, updated_at = ?
        WHERE id = ?`,
     ).run(categoryId, amount, txnDate, serviceLabel, notes, now, existing.id);
     return;
@@ -1248,7 +1549,7 @@ function upsertExpenseTransaction(
   db.prepare(
     `INSERT INTO transactions
     (type, sub_type, party_id, category_id, account_id, amount, txn_date, payment_method, service_label, reference_no, status, notes, created_by, approved_by, approved_at, created_at, updated_at)
-    VALUES ('expense', 'expense', NULL, ?, NULL, ?, ?, 'transfer', ?, ?, 'posted', ?, NULL, NULL, NULL, ?, ?)`,
+    VALUES ('expense', 'expense', NULL, ?, ${KAS_ACCOUNT_SQL}, ?, ?, 'transfer', ?, ?, 'posted', ?, NULL, NULL, NULL, ?, ?)`,
   ).run(categoryId, amount, txnDate, serviceLabel, ref, notes, now, now);
 }
 
@@ -1260,7 +1561,7 @@ function syncBatchTransferExpense(batchId: number): void {
          b.name AS batch_name,
          b.description AS batch_description,
          COALESCE(SUM(CASE WHEN bi.transfer_status = 'done' THEN bi.amount ELSE 0 END), 0) AS total_amount,
-         COALESCE(SUM(CASE WHEN bi.transfer_status = 'done' THEN bi.transfer_fee ELSE 0 END), 0) AS total_fee,
+         COALESCE(SUM(CASE WHEN bi.transfer_status = 'done' AND lower(trim(COALESCE(bi.payment_method, ''))) != 'cash' THEN bi.transfer_fee ELSE 0 END), 0) AS total_fee,
          COALESCE(SUM(CASE WHEN bi.transfer_status = 'done' THEN 1 ELSE 0 END), 0) AS done_count,
          MAX(CASE WHEN bi.transfer_status = 'done' THEN bi.transfer_at ELSE NULL END) AS latest_transfer_at
        FROM batches b
@@ -1584,32 +1885,29 @@ export const batchItemDb = {
     return result.changes > 0;
   },
 
-  populate: (batchId: number, batch: Batch): number => {
-    const recipients = recipientDb.getAll();
-    let count = 0;
+  /**
+   * Make a batch's recipient list match membership dates for its month:
+   * add everyone whose period overlaps the month and is missing, and remove
+   * rows for people outside it as long as nothing was paid, notified or
+   * proven for them yet. Rows with activity are kept and reported.
+   */
+  sync: (batchId: number, batch: Batch): BatchSyncResult => {
+    const period = batch.period || todayJakarta().slice(0, 7);
+    const eligible = recipientDb.getForPeriod(period) as (Recipient & {
+      actual_bank_name?: string | null;
+    })[];
+    const eligibleIds = new Set(eligible.map((r) => r.id!));
+    const result: BatchSyncResult = { added: [], removed: [], kept: [] };
     const now = new Date().toISOString();
-    const insertTransaction = db.transaction(() => {
-      for (const r of recipients) {
-        const exists = checkBatchItemExists.get(batchId, r.id!);
-        if (!exists) {
-          if (batch.type === "special") {
-            insertBatchItem.run(
-              batchId,
-              r.id!,
-              batch.default_amount,
-              "transfer",
-              0,
-              0,
-              "none",
-              0,
-              0,
-              now,
-              now,
-            );
-            count++;
-            continue;
-          }
-          // Determine zoom type from recipient data
+    db.transaction(() => {
+      for (const r of eligible) {
+        if (checkBatchItemExists.get(batchId, r.id!)) continue;
+        // New rows are transfers, so start with the fee from the default
+        // source bank (Mandiri); "Hitung Biaya" recalculates for BCA.
+        const fee = getTransferFee(DEFAULT_SOURCE_BANK, r.actual_bank_name);
+        if (batch.type === "special") {
+          insertBatchItem.run(batchId, r.id!, batch.default_amount, "transfer", 0, 0, "none", 0, fee, now, now);
+        } else {
           let zoomType: ZoomType = "none";
           if (r.zoom_eligible) {
             zoomType = r.family_group_id ? "family" : "single";
@@ -1623,25 +1921,61 @@ export const batchItemDb = {
             batch.zoom_family_rate,
             0,
           );
-          insertBatchItem.run(
-            batchId,
-            r.id!,
-            amount,
-            "transfer",
-            0,
-            0,
-            zoomType,
-            0,
-            0,
-            now,
-            now,
-          );
-          count++;
+          insertBatchItem.run(batchId, r.id!, amount, "transfer", 0, 0, zoomType, 0, fee, now, now);
         }
+        result.added.push(r.name);
       }
-    });
-    insertTransaction();
-    return count;
+
+      const current = db
+        .prepare(
+          `SELECT bi.id, bi.recipient_id, bi.transfer_status, bi.notify_status,
+             (bi.transfer_proof IS NOT NULL AND bi.transfer_proof != '') AS has_proof,
+             r.name
+           FROM batch_items bi JOIN recipients r ON r.id = bi.recipient_id
+           WHERE bi.batch_id = ?`,
+        )
+        .all(batchId) as {
+        id: number;
+        recipient_id: number;
+        transfer_status: string;
+        notify_status: string;
+        has_proof: number;
+        name: string;
+      }[];
+      for (const item of current) {
+        if (eligibleIds.has(item.recipient_id)) continue;
+        const touched =
+          item.transfer_status !== "pending" ||
+          item.notify_status !== "pending" ||
+          item.has_proof;
+        if (touched) {
+          result.kept.push(item.name);
+          continue;
+        }
+        db.prepare(
+          "DELETE FROM attendance_records WHERE batch_id = ? AND recipient_id = ?",
+        ).run(batchId, item.recipient_id);
+        deleteBatchItem.run(item.id);
+        result.removed.push(item.name);
+      }
+    })();
+    if (result.removed.length > 0) syncBatchTransferExpense(batchId);
+    return result;
+  },
+
+  /** Sync every batch that is still open (status "active"). */
+  syncOpenBatches: (): BatchSyncResult => {
+    const total: BatchSyncResult = { added: [], removed: [], kept: [] };
+    const open = (selectAllBatches.all() as Batch[]).filter(
+      (b) => b.status === "active",
+    );
+    for (const b of open) {
+      const r = batchItemDb.sync(b.id!, b);
+      total.added.push(...r.added.map((n) => `${n} (${b.name})`));
+      total.removed.push(...r.removed.map((n) => `${n} (${b.name})`));
+      total.kept.push(...r.kept.map((n) => `${n} (${b.name})`));
+    }
+    return total;
   },
 
   getProof: (id: number): string | null => {
@@ -2091,6 +2425,78 @@ export const financeAccountDb = {
       .all() as FinanceAccount[];
   },
 
+  /**
+   * Book balance of every active account (opening balance plus all posted
+   * rows, transfers included) set against its latest bank statement. For a
+   * bank account, book + lines still awaiting reconciliation should equal the
+   * statement's closing balance; `difference` is what remains (a few rupiah of
+   * rounding on interest/tax at most).
+   */
+  getBalances: (asOf?: string): AccountBalance[] => {
+    const accounts = db
+      .prepare("SELECT * FROM accounts WHERE is_active = 1 ORDER BY account_type, name")
+      .all() as FinanceAccount[];
+    return accounts.map((account) => {
+      const statement = account.account_number
+        ? (db
+            .prepare(
+              `SELECT period_to, closing_balance FROM bank_statement_imports
+               WHERE ${normalizeAccountNumberSql("account_no")} = ?
+                 ${asOf ? "AND date(period_to) <= date(?)" : ""}
+               ORDER BY period_to DESC LIMIT 1`,
+            )
+            .get(
+              ...[String(account.account_number).replace(/\D/g, ""), ...(asOf ? [asOf] : [])],
+            ) as { period_to: string; closing_balance: number } | undefined)
+        : undefined;
+      const cutoff = asOf ?? statement?.period_to ?? null;
+      const movement = db
+        .prepare(
+          `SELECT
+             COALESCE(SUM(CASE WHEN type = 'income' THEN amount ELSE 0 END), 0) AS inflow,
+             COALESCE(SUM(CASE WHEN type = 'expense' THEN amount ELSE 0 END), 0) AS outflow
+           FROM transactions
+           WHERE account_id = ? AND status != 'void'
+             ${cutoff ? "AND date(txn_date) <= date(?)" : ""}`,
+        )
+        .get(...[account.id, ...(cutoff ? [cutoff] : [])]) as { inflow: number; outflow: number };
+      const unreconciled = statement
+        ? (db
+            .prepare(
+              `SELECT COUNT(*) AS lines, COALESCE(SUM(l.signed_amount), 0) AS amount
+               FROM bank_statement_lines l
+               JOIN bank_statement_imports i ON i.id = l.import_id
+               WHERE ${normalizeAccountNumberSql("i.account_no")} = ?
+                 AND l.match_status IN ('unmatched', 'suggested')
+                 AND date(i.period_to) <= date(?)`,
+            )
+            .get(String(account.account_number).replace(/\D/g, ""), statement.period_to) as {
+            lines: number;
+            amount: number;
+          })
+        : { lines: 0, amount: 0 };
+      const book = (account.opening_balance || 0) + movement.inflow - movement.outflow;
+      return {
+        account_id: account.id as number,
+        name: account.name,
+        account_type: account.account_type,
+        account_number: account.account_number ?? null,
+        opening_balance: account.opening_balance || 0,
+        inflow: movement.inflow,
+        outflow: movement.outflow,
+        book_balance: book,
+        as_of: cutoff,
+        statement_date: statement?.period_to ?? null,
+        statement_balance: statement?.closing_balance ?? null,
+        unreconciled_lines: unreconciled.lines,
+        unreconciled_amount: unreconciled.amount,
+        difference: statement
+          ? Math.round((statement.closing_balance - book - unreconciled.amount) * 100) / 100
+          : null,
+      };
+    });
+  },
+
   getById: (id: number): FinanceAccount | undefined => {
     return db.prepare("SELECT * FROM accounts WHERE id = ?").get(id) as
       | FinanceAccount
@@ -2462,16 +2868,33 @@ export const boardApprovalVoteDb = {
   },
 };
 
+/**
+ * Owed to Konferens when the books start (1 Jan 2026): its half of the
+ * 27 Dec 2025 terpadu collection (kwitansi 265026, Rp 129.000), which was still
+ * cash on hand and was remitted with January.
+ */
+const KONFERENS_OPENING_PAYABLE = 64_500;
+
+/** The part of an income row that belongs to Konferens rather than the church. */
+function konferensShare(row: { sub_type: string; service_label: string | null; amount: number }): number {
+  if (row.sub_type === "tithe") return row.amount;
+  if (row.sub_type === "offering" && (row.service_label || "").trim() === "Persembahan Terpadu") {
+    return splitTerpadu(row.amount).konferens;
+  }
+  return 0;
+}
+
 export const financeTransactionDb = {
   getAll: (filters?: {
     type?: "income" | "expense";
-    sub_type?: "tithe" | "offering" | "other_income" | "expense";
+    sub_type?: FinanceSubType;
     status?: "draft" | "pending_approval" | "approved" | "posted" | "void";
     from?: string;
     to?: string;
     category_id?: number;
     party_id?: number;
     q?: string;
+    exclude_sub_types?: string[];
   }): FinanceTransaction[] => {
     const where: string[] = [];
     const params: unknown[] = [];
@@ -2483,6 +2906,10 @@ export const financeTransactionDb = {
     if (filters?.sub_type) {
       where.push("t.sub_type = ?");
       params.push(filters.sub_type);
+    }
+    if (filters?.exclude_sub_types?.length) {
+      where.push(`t.sub_type NOT IN (${filters.exclude_sub_types.map(() => "?").join(", ")})`);
+      params.push(...filters.exclude_sub_types);
     }
     if (filters?.status) {
       where.push("t.status = ?");
@@ -2577,7 +3004,7 @@ export const financeTransactionDb = {
 
   create: (data: {
     type: "income" | "expense";
-    sub_type: "tithe" | "offering" | "other_income" | "expense";
+    sub_type: FinanceSubType;
     party_id?: number | null;
     category_id: number;
     account_id?: number | null;
@@ -2850,6 +3277,13 @@ export const financeTransactionDb = {
     return result.changes > 0;
   },
 
+  /**
+   * Church-basis summary for a month. Tithe and the Konferens half of the
+   * terpadu offering are held for Konferens, not church income, and remittances
+   * that pay them over are not church expenses; moves between the church's own
+   * accounts are neither. Those pass-through amounts are reported separately
+   * under `konferens`.
+   */
   getMonthlySummary: (
     month: string,
   ): {
@@ -2859,16 +3293,22 @@ export const financeTransactionDb = {
     net_total: number;
     pending_approvals: number;
     expense_by_category: Array<{ category: string; total: number }>;
+    gross_received: number;
+    konferens: KonferensPayable;
   } => {
     const monthPattern = `${month}%`;
-    const incomeRow = db
+    const received = db
       .prepare(
-        "SELECT COALESCE(SUM(amount), 0) as total FROM transactions WHERE type = 'income' AND status != 'void' AND txn_date LIKE ?",
+        `SELECT sub_type, service_label, amount FROM transactions
+         WHERE type = 'income' AND sub_type != 'transfer' AND status != 'void' AND txn_date LIKE ?`,
       )
-      .get(monthPattern) as { total: number };
+      .all(monthPattern) as Array<{ sub_type: string; service_label: string | null; amount: number }>;
+    const grossReceived = received.reduce((sum, r) => sum + r.amount, 0);
+    const heldForKonferens = received.reduce((sum, r) => sum + konferensShare(r), 0);
+
     const expenseRow = db
       .prepare(
-        "SELECT COALESCE(SUM(amount), 0) as total FROM transactions WHERE type = 'expense' AND status != 'void' AND txn_date LIKE ?",
+        "SELECT COALESCE(SUM(amount), 0) as total FROM transactions WHERE type = 'expense' AND sub_type = 'expense' AND status != 'void' AND txn_date LIKE ?",
       )
       .get(monthPattern) as { total: number };
     const pendingRow = db
@@ -2881,19 +3321,78 @@ export const financeTransactionDb = {
         `SELECT c.name as category, COALESCE(SUM(t.amount), 0) as total
          FROM transactions t
          LEFT JOIN categories c ON c.id = t.category_id
-         WHERE t.type = 'expense' AND t.status != 'void' AND t.txn_date LIKE ?
+         WHERE t.type = 'expense' AND t.sub_type = 'expense' AND t.status != 'void' AND t.txn_date LIKE ?
          GROUP BY t.category_id
          ORDER BY total DESC`,
       )
       .all(monthPattern) as Array<{ category: string; total: number }>;
 
+    const [year, mon] = month.split("-").map(Number);
+    const lastDay = new Date(Date.UTC(year, mon, 0)).getUTCDate();
+    const incomeTotal = grossReceived - heldForKonferens;
     return {
       month,
-      income_total: incomeRow.total,
+      income_total: incomeTotal,
       expense_total: expenseRow.total,
-      net_total: incomeRow.total - expenseRow.total,
+      net_total: incomeTotal - expenseRow.total,
       pending_approvals: pendingRow.count,
       expense_by_category: expenseByCategory,
+      gross_received: grossReceived,
+      konferens: financeTransactionDb.getKonferensPayable({
+        date_from: `${month}-01`,
+        date_to: `${month}-${String(lastDay).padStart(2, "0")}`,
+      }),
+    };
+  },
+
+  /**
+   * Money owed to Konferens over a period: everything held for it (all tithe,
+   * the Konferens half of terpadu offerings) less what was remitted. The
+   * outstanding balance carries from the start of the books.
+   */
+  getKonferensPayable: (params: { date_from: string; date_to: string }): KonferensPayable => {
+    const held = (from: string | null, to: string) => {
+      const rows = db
+        .prepare(
+          `SELECT sub_type, service_label, amount FROM transactions
+           WHERE type = 'income' AND sub_type IN ('tithe', 'offering') AND status != 'void'
+             AND date(txn_date) <= date(?) ${from ? "AND date(txn_date) >= date(?)" : ""}`,
+        )
+        .all(...(from ? [to, from] : [to])) as Array<{ sub_type: string; service_label: string | null; amount: number }>;
+      let tithe = 0;
+      let terpadu = 0;
+      for (const r of rows) {
+        if (r.sub_type === "tithe") tithe += r.amount;
+        else terpadu += konferensShare(r);
+      }
+      return { tithe, terpadu };
+    };
+    const remitted = (from: string | null, to: string) =>
+      (db
+        .prepare(
+          `SELECT COALESCE(SUM(amount), 0) AS total FROM transactions
+           WHERE type = 'expense' AND sub_type = 'remittance' AND status != 'void'
+             AND date(txn_date) <= date(?) ${from ? "AND date(txn_date) >= date(?)" : ""}`,
+        )
+        .get(...(from ? [to, from] : [to])) as { total: number }).total;
+
+    const dayBefore = new Date(`${params.date_from}T00:00:00Z`);
+    dayBefore.setUTCDate(dayBefore.getUTCDate() - 1);
+    const beforeKey = dayBefore.toISOString().slice(0, 10);
+    const priorHeld = held(null, beforeKey);
+    const opening =
+      KONFERENS_OPENING_PAYABLE + priorHeld.tithe + priorHeld.terpadu - remitted(null, beforeKey);
+
+    const period = held(params.date_from, params.date_to);
+    const paid = remitted(params.date_from, params.date_to);
+    return {
+      date_from: params.date_from,
+      date_to: params.date_to,
+      opening,
+      tithe: period.tithe,
+      terpadu_konferens: period.terpadu,
+      remitted: paid,
+      closing: opening + period.tithe + period.terpadu - paid,
     };
   },
 
@@ -2922,7 +3421,8 @@ export const financeTransactionDb = {
         `SELECT txn_date, type, amount
          FROM transactions
          WHERE status != 'void'
-           AND txn_date BETWEEN ? AND ?
+           AND sub_type != 'transfer'
+           AND date(txn_date) BETWEEN date(?) AND date(?)
          ORDER BY txn_date ASC, id ASC`,
       )
       .all(params.date_from, params.date_to) as Array<{
@@ -3018,7 +3518,11 @@ export const financeTransactionDb = {
     }>;
   } => {
     const type = params.type ?? "income";
-    const where: string[] = ["status != 'void'", "txn_date BETWEEN ? AND ?"];
+    const where: string[] = [
+      "status != 'void'",
+      "sub_type != 'transfer'",
+      "date(txn_date) BETWEEN date(?) AND date(?)",
+    ];
     const queryParams: Array<string> = [params.date_from, params.date_to];
     if (type !== "all") {
       where.push("type = ?");
@@ -3164,7 +3668,7 @@ type ReconLineWithHints = {
 };
 
 type ReconCreateTxnInput = {
-  sub_type?: "tithe" | "offering" | "other_income" | "expense";
+  sub_type?: FinanceSubType;
   category_id?: number;
   service_label?: string;
   payment_method?: string;
@@ -3958,3 +4462,701 @@ if (base64Proofs.length > 0) {
     }
   }
 }
+
+// ============================================================================
+// Laporan Keuangan GMAHK Konferens DKI Jakarta & Sekitarnya
+// ============================================================================
+
+export type JemaatAccount = {
+  id: number;
+  code: string;
+  name: string;
+  sort_order: number;
+  is_active: number;
+};
+
+export const jemaatAccountDb = {
+  getAll: (): JemaatAccount[] =>
+    db
+      .prepare(
+        "SELECT id, code, name, sort_order, is_active FROM jemaat_accounts WHERE is_active = 1 ORDER BY sort_order",
+      )
+      .all() as JemaatAccount[],
+
+  getByCode: (code: string): JemaatAccount | undefined =>
+    db
+      .prepare("SELECT id, code, name, sort_order, is_active FROM jemaat_accounts WHERE code = ?")
+      .get(code) as JemaatAccount | undefined,
+};
+
+export type ReceiptGiverInput = {
+  giver_name: string;
+  party_id?: number | null;
+  bucket: "perpuluhan" | "terpadu" | "khusus_jemaat" | "khusus_mission";
+  amount: number;
+  method?: "envelope" | "transfer" | "cash";
+  notes?: string | null;
+};
+
+export type ReceiptInput = {
+  receipt_no?: string | null;
+  receipt_date: string;
+  giver_name: string;
+  party_id?: number | null;
+  kind: ReceiptKind;
+  total_amount: number;
+  account_id?: number | null;
+  notes?: string | null;
+  status?: "draft" | "posted" | "void";
+  /** Explicit allocations; required for `mixed`, derived otherwise. */
+  allocations?: Allocation[];
+  givers?: ReceiptGiverInput[];
+  created_by?: number | null;
+};
+
+export type ReceiptRecord = {
+  id: number;
+  receipt_no: string | null;
+  receipt_date: string;
+  month_key: string;
+  giver_name: string;
+  party_id: number | null;
+  kind: ReceiptKind;
+  total_amount: number;
+  account_id: number | null;
+  notes: string | null;
+  status: "draft" | "posted" | "void";
+  allocations: Allocation[];
+  givers: Array<ReceiptGiverInput & { id: number }>;
+};
+
+function monthKeyOf(dateOnly: string): string {
+  return String(dateOnly).slice(0, 7);
+}
+
+function loadReceiptChildren(receiptIds: number[]): {
+  allocations: Map<number, Allocation[]>;
+  givers: Map<number, Array<ReceiptGiverInput & { id: number }>>;
+} {
+  const allocations = new Map<number, Allocation[]>();
+  const givers = new Map<number, Array<ReceiptGiverInput & { id: number }>>();
+  if (receiptIds.length === 0) return { allocations, givers };
+
+  const placeholders = receiptIds.map(() => "?").join(", ");
+  const allocationRows = db
+    .prepare(
+      `SELECT receipt_id, bucket, amount FROM receipt_allocations WHERE receipt_id IN (${placeholders})`,
+    )
+    .all(...receiptIds) as Array<{
+    receipt_id: number;
+    bucket: AllocationBucket;
+    amount: number;
+  }>;
+  for (const row of allocationRows) {
+    const list = allocations.get(row.receipt_id) ?? [];
+    list.push({ bucket: row.bucket, amount: row.amount });
+    allocations.set(row.receipt_id, list);
+  }
+
+  const giverRows = db
+    .prepare(
+      `SELECT id, receipt_id, giver_name, party_id, bucket, amount, method, notes
+       FROM receipt_givers WHERE receipt_id IN (${placeholders}) ORDER BY id`,
+    )
+    .all(...receiptIds) as Array<
+    ReceiptGiverInput & { id: number; receipt_id: number }
+  >;
+  for (const row of giverRows) {
+    const list = givers.get(row.receipt_id) ?? [];
+    list.push(row);
+    givers.set(row.receipt_id, list);
+  }
+
+  return { allocations, givers };
+}
+
+function hydrateReceipts(
+  rows: Array<Omit<ReceiptRecord, "allocations" | "givers">>,
+): ReceiptRecord[] {
+  const { allocations, givers } = loadReceiptChildren(rows.map((r) => r.id));
+  return rows.map((row) => ({
+    ...row,
+    allocations: allocations.get(row.id) ?? [],
+    givers: givers.get(row.id) ?? [],
+  }));
+}
+
+export const konferensReceiptDb = {
+  /**
+   * Creates a kwitansi with its five-column allocation. Allocations are derived
+   * from the receipt kind unless supplied explicitly, and are rejected if they
+   * do not add up to the Jumlah — the control that makes the page cross-foot.
+   */
+  create: (input: ReceiptInput): ReceiptRecord => {
+    const now = new Date().toISOString();
+    const total = Math.max(0, Math.trunc(input.total_amount));
+    const allocations =
+      input.allocations && input.allocations.length > 0
+        ? input.allocations.map((allocation) => ({
+            bucket: allocation.bucket,
+            amount: Math.trunc(allocation.amount),
+          }))
+        : allocateReceipt(input.kind, total);
+
+    const validation = validateReceiptAllocations(total, allocations);
+    if (!validation.ok) {
+      throw new Error(validation.errors.join("; "));
+    }
+
+    const givers = (input.givers ?? []).map((giver) => ({
+      ...giver,
+      amount: Math.trunc(giver.amount),
+    }));
+    const giverTotal = givers.reduce((sum, giver) => sum + giver.amount, 0);
+    if (givers.length > 0 && giverTotal !== total) {
+      throw new Error(
+        `Rincian pemberi (${giverTotal}) tidak sama dengan Jumlah kwitansi (${total})`,
+      );
+    }
+
+    const run = db.transaction(() => {
+      const result = db
+        .prepare(
+          `INSERT INTO receipts (receipt_no, receipt_date, month_key, giver_name, party_id, kind, total_amount, account_id, notes, status, created_by, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          input.receipt_no?.trim() || null,
+          input.receipt_date,
+          monthKeyOf(input.receipt_date),
+          input.giver_name.trim(),
+          input.party_id ?? null,
+          input.kind,
+          total,
+          input.account_id ?? null,
+          input.notes ?? null,
+          input.status ?? "posted",
+          input.created_by ?? null,
+          now,
+          now,
+        );
+      const receiptId = result.lastInsertRowid as number;
+
+      const insertAllocation = db.prepare(
+        "INSERT INTO receipt_allocations (receipt_id, bucket, amount, created_at) VALUES (?, ?, ?, ?)",
+      );
+      for (const allocation of allocations) {
+        insertAllocation.run(receiptId, allocation.bucket, allocation.amount, now);
+      }
+
+      const insertGiver = db.prepare(
+        `INSERT INTO receipt_givers (receipt_id, giver_name, party_id, bucket, amount, method, notes, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      );
+      for (const giver of givers) {
+        insertGiver.run(
+          receiptId,
+          giver.giver_name.trim(),
+          giver.party_id ?? null,
+          giver.bucket,
+          giver.amount,
+          giver.method ?? "envelope",
+          giver.notes ?? null,
+          now,
+          now,
+        );
+      }
+
+      return receiptId;
+    });
+
+    const receiptId = run();
+    return konferensReceiptDb.getById(receiptId)!;
+  },
+
+  getById: (id: number): ReceiptRecord | undefined => {
+    const row = db.prepare("SELECT * FROM receipts WHERE id = ?").get(id) as
+      | Omit<ReceiptRecord, "allocations" | "givers">
+      | undefined;
+    if (!row) return undefined;
+    return hydrateReceipts([row])[0];
+  },
+
+  getByMonth: (monthKey: string, includeVoid = false): ReceiptRecord[] => {
+    const rows = db
+      .prepare(
+        `SELECT * FROM receipts
+         WHERE month_key = ? ${includeVoid ? "" : "AND status != 'void'"}
+         ORDER BY receipt_date, COALESCE(receipt_no, ''), id`,
+      )
+      .all(monthKey) as Array<Omit<ReceiptRecord, "allocations" | "givers">>;
+    return hydrateReceipts(rows);
+  },
+
+  voidReceipt: (id: number, reason: string): void => {
+    db.prepare(
+      "UPDATE receipts SET status = 'void', void_reason = ?, updated_at = ? WHERE id = ?",
+    ).run(reason, new Date().toISOString(), id);
+  },
+
+  /** Per-member giving history, for annual giving statements. */
+  getGivingByParty: (
+    dateFrom: string,
+    dateTo: string,
+  ): Array<{
+    giver_key: string;
+    giver_name: string;
+    perpuluhan: number;
+    terpadu: number;
+    khusus: number;
+    total: number;
+  }> => {
+    const rows = db
+      .prepare(
+        `SELECT g.giver_name, g.bucket, SUM(g.amount) AS total
+         FROM receipt_givers g
+         JOIN receipts r ON r.id = g.receipt_id
+         WHERE r.status != 'void' AND r.receipt_date BETWEEN ? AND ?
+         GROUP BY g.giver_name, g.bucket`,
+      )
+      .all(dateFrom, dateTo) as Array<{
+      giver_name: string;
+      bucket: string;
+      total: number;
+    }>;
+
+    const byKey = new Map<
+      string,
+      {
+        giver_key: string;
+        giver_name: string;
+        perpuluhan: number;
+        terpadu: number;
+        khusus: number;
+        total: number;
+      }
+    >();
+    for (const row of rows) {
+      const key = normalizeGiverName(row.giver_name);
+      const entry =
+        byKey.get(key) ??
+        {
+          giver_key: key,
+          giver_name: row.giver_name,
+          perpuluhan: 0,
+          terpadu: 0,
+          khusus: 0,
+          total: 0,
+        };
+      if (row.bucket === "perpuluhan") entry.perpuluhan += row.total;
+      else if (row.bucket === "terpadu") entry.terpadu += row.total;
+      else entry.khusus += row.total;
+      entry.total += row.total;
+      byKey.set(key, entry);
+    }
+    return [...byKey.values()].sort((left, right) => right.total - left.total);
+  },
+};
+
+export type KonferensMonthlyReport = {
+  month_key: string;
+  church_name: string;
+  receipts: ReceiptRecord[];
+  cross_foot: CrossFootResult;
+  giving_units: GivingUnitCounts;
+  receipt_gaps: ReturnType<typeof findReceiptNumberGaps>;
+  /** Dana Mission Sedunia — owed to Konferens for the month. */
+  konferens_due: number;
+  remittance:
+    | {
+        id: number;
+        sent_date: string | null;
+        method: "bank" | "cash" | null;
+        reference_no: string | null;
+        konferens_received_date: string | null;
+        konferens_receipt_no: string | null;
+        total_amount: number;
+        status: "draft" | "sent" | "acknowledged";
+      }
+    | null;
+  konferens_outstanding: number;
+  jemaat: {
+    opening_balance: number;
+    income_this_month: number;
+    available: number;
+    expenses_this_month: Array<{
+      code: string;
+      name: string;
+      sort_order: number;
+      amount: number;
+      amount_ytd: number;
+    }>;
+    expense_total_this_month: number;
+    expense_total_ytd: number;
+    unclassified_expense: number;
+    closing_balance: number;
+  };
+  warnings: string[];
+};
+
+function previousMonthKey(monthKey: string): string {
+  const [year, month] = monthKey.split("-").map(Number);
+  const date = new Date(Date.UTC(year, month - 2, 1));
+  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}`;
+}
+
+function monthBounds(monthKey: string): { start: string; end: string } {
+  const [year, month] = monthKey.split("-").map(Number);
+  const days = new Date(year, month, 0).getDate();
+  return {
+    start: `${monthKey}-01`,
+    end: `${monthKey}-${String(days).padStart(2, "0")}`,
+  };
+}
+
+export const konferensReportDb = {
+  /**
+   * Builds the full monthly form: the receipt register with its five column
+   * totals, the Dana Jemaat roll-forward, the remittance status, and every
+   * validation the treasurer would otherwise run by hand.
+   */
+  getMonthlyReport: (
+    monthKey: string,
+    churchName = "GMAHK EFATA",
+  ): KonferensMonthlyReport => {
+    const receipts = konferensReceiptDb.getByMonth(monthKey);
+    const crossFootResult = crossFoot(
+      receipts.map((receipt) => ({
+        id: receipt.id,
+        receipt_no: receipt.receipt_no,
+        total_amount: receipt.total_amount,
+        allocations: receipt.allocations,
+      })),
+    );
+
+    const giverLines: GiverLine[] = receipts.flatMap((receipt) =>
+      receipt.givers.length > 0
+        ? receipt.givers.map((giver) => ({
+            giver_name: giver.giver_name,
+            bucket: giver.bucket,
+            amount: giver.amount,
+          }))
+        : receipt.allocations.map((allocation) => ({
+            giver_name: receipt.giver_name,
+            bucket:
+              allocation.bucket === "terpadu_konferens" ||
+              allocation.bucket === "terpadu_jemaat"
+                ? ("terpadu" as const)
+                : allocation.bucket === "perpuluhan"
+                  ? ("perpuluhan" as const)
+                  : allocation.bucket === "khusus_mission"
+                    ? ("khusus_mission" as const)
+                    : ("khusus_jemaat" as const),
+            amount: allocation.amount,
+          })),
+    );
+
+    const bounds = monthBounds(monthKey);
+    const yearStart = `${monthKey.slice(0, 4)}-01-01`;
+
+    const accounts = jemaatAccountDb.getAll();
+    const expenseRows = db
+      .prepare(
+        `SELECT jemaat_account_id AS account_id,
+                SUM(CASE WHEN txn_date BETWEEN ? AND ? THEN amount ELSE 0 END) AS amount_month,
+                SUM(amount) AS amount_ytd
+         FROM transactions
+         WHERE type = 'expense' AND status NOT IN ('void', 'draft')
+           AND txn_date BETWEEN ? AND ?
+         GROUP BY jemaat_account_id`,
+      )
+      .all(bounds.start, bounds.end, yearStart, bounds.end) as Array<{
+      account_id: number | null;
+      amount_month: number;
+      amount_ytd: number;
+    }>;
+
+    const byAccountId = new Map(
+      expenseRows.map((row) => [row.account_id, row]),
+    );
+    const expenses = accounts.map((account) => {
+      const row = byAccountId.get(account.id);
+      return {
+        code: account.code,
+        name: account.name,
+        sort_order: account.sort_order,
+        amount: row?.amount_month ?? 0,
+        amount_ytd: row?.amount_ytd ?? 0,
+      };
+    });
+    const unclassified = byAccountId.get(null)?.amount_month ?? 0;
+
+    const expenseTotalMonth = expenses.reduce(
+      (sum, line) => sum + line.amount,
+      0,
+    );
+    const expenseTotalYtd = expenses.reduce(
+      (sum, line) => sum + line.amount_ytd,
+      0,
+    );
+
+    const priorClose = db
+      .prepare(
+        "SELECT jemaat_closing_balance FROM period_closes WHERE month_key = ?",
+      )
+      .get(previousMonthKey(monthKey)) as
+      | { jemaat_closing_balance: number }
+      | undefined;
+    const openingBalance = priorClose?.jemaat_closing_balance ?? 0;
+
+    const incomeThisMonth = crossFootResult.jemaat_total;
+    const closingBalance =
+      openingBalance + incomeThisMonth - expenseTotalMonth;
+
+    const remittanceRow = db
+      .prepare(
+        `SELECT id, sent_date, method, reference_no, konferens_received_date, konferens_receipt_no, total_amount, status
+         FROM remittances WHERE month_key = ?`,
+      )
+      .get(monthKey) as KonferensMonthlyReport["remittance"];
+
+    const warnings: string[] = [];
+    if (!crossFootResult.ok) {
+      warnings.push(
+        `Cross-foot tidak seimbang: selisih ${crossFootResult.difference}`,
+      );
+    }
+    for (const receipt of crossFootResult.unbalanced_receipts) {
+      warnings.push(
+        `Kwitansi ${receipt.receipt_no ?? receipt.id}: alokasi ${receipt.allocated} vs jumlah ${receipt.total_amount}`,
+      );
+    }
+    if (unclassified > 0) {
+      warnings.push(
+        `Pengeluaran belum diklasifikasi ke pos Dana Jemaat: ${unclassified}`,
+      );
+    }
+    if (closingBalance < 0) {
+      warnings.push(`Saldo akhir Dana Jemaat negatif: ${closingBalance}`);
+    }
+    const konferensDue = crossFootResult.konferens_total;
+    const remitted = remittanceRow?.total_amount ?? 0;
+    if (remittanceRow && remitted !== konferensDue) {
+      warnings.push(
+        `Kiriman ke Konferens (${remitted}) tidak sama dengan Dana Mission Sedunia bulan ini (${konferensDue})`,
+      );
+    }
+
+    // Void receipts are included here on purpose: a voided kwitansi explains
+    // its own gap, so counting it keeps the report from flagging a break that
+    // is already accounted for.
+    const gaps = findReceiptNumberGaps(
+      konferensReceiptDb
+        .getByMonth(monthKey, true)
+        .map((receipt) => receipt.receipt_no),
+    );
+    if (gaps.gaps.length > 0) {
+      warnings.push(
+        `Nomor kwitansi tidak berurutan: ${gaps.gaps
+          .map((gap) => gap.missing.join(", "))
+          .join("; ")}`,
+      );
+    }
+    if (gaps.unnumbered > 0) {
+      warnings.push(`${gaps.unnumbered} kwitansi tanpa nomor`);
+    }
+
+    return {
+      month_key: monthKey,
+      church_name: churchName,
+      receipts,
+      cross_foot: crossFootResult,
+      giving_units: countGivingUnits(giverLines),
+      receipt_gaps: gaps,
+      konferens_due: konferensDue,
+      remittance: remittanceRow ?? null,
+      konferens_outstanding: konferensDue - remitted,
+      jemaat: {
+        opening_balance: openingBalance,
+        income_this_month: incomeThisMonth,
+        available: openingBalance + incomeThisMonth,
+        expenses_this_month: expenses,
+        expense_total_this_month: expenseTotalMonth,
+        expense_total_ytd: expenseTotalYtd,
+        unclassified_expense: unclassified,
+        closing_balance: closingBalance,
+      },
+      warnings,
+    };
+  },
+};
+
+export const remittanceDb = {
+  /** Rebuilds the remittance for a month from that month's receipts. */
+  syncFromReceipts: (monthKey: string): void => {
+    const now = new Date().toISOString();
+    const receipts = konferensReceiptDb.getByMonth(monthKey);
+    const result = crossFoot(
+      receipts.map((receipt) => ({
+        total_amount: receipt.total_amount,
+        allocations: receipt.allocations,
+      })),
+    );
+
+    const run = db.transaction(() => {
+      db.prepare(
+        `INSERT INTO remittances (month_key, total_amount, status, created_at, updated_at)
+         VALUES (?, ?, 'draft', ?, ?)
+         ON CONFLICT(month_key) DO UPDATE SET total_amount = excluded.total_amount, updated_at = excluded.updated_at`,
+      ).run(monthKey, result.konferens_total, now, now);
+
+      const remittance = db
+        .prepare("SELECT id FROM remittances WHERE month_key = ?")
+        .get(monthKey) as { id: number };
+
+      db.prepare("DELETE FROM remittance_lines WHERE remittance_id = ?").run(
+        remittance.id,
+      );
+      const insertLine = db.prepare(
+        "INSERT INTO remittance_lines (remittance_id, bucket, amount, created_at) VALUES (?, ?, ?, ?)",
+      );
+      for (const bucket of KONFERENS_BUCKETS) {
+        const amount = result.by_bucket[bucket];
+        if (amount > 0) insertLine.run(remittance.id, bucket, amount, now);
+      }
+    });
+    run();
+  },
+
+  markSent: (
+    monthKey: string,
+    data: {
+      sent_date: string;
+      method: "bank" | "cash";
+      account_id?: number | null;
+      reference_no?: string | null;
+      proof?: string | null;
+    },
+  ): void => {
+    db.prepare(
+      `UPDATE remittances
+       SET sent_date = ?, method = ?, account_id = ?, reference_no = ?, proof = ?, status = 'sent', updated_at = ?
+       WHERE month_key = ?`,
+    ).run(
+      data.sent_date,
+      data.method,
+      data.account_id ?? null,
+      data.reference_no ?? null,
+      data.proof ?? null,
+      new Date().toISOString(),
+      monthKey,
+    );
+  },
+
+  acknowledge: (
+    monthKey: string,
+    data: { received_date: string; receipt_no: string },
+  ): void => {
+    db.prepare(
+      `UPDATE remittances
+       SET konferens_received_date = ?, konferens_receipt_no = ?, status = 'acknowledged', updated_at = ?
+       WHERE month_key = ?`,
+    ).run(
+      data.received_date,
+      data.receipt_no,
+      new Date().toISOString(),
+      monthKey,
+    );
+  },
+
+  getByMonth: (monthKey: string) =>
+    db.prepare("SELECT * FROM remittances WHERE month_key = ?").get(monthKey),
+};
+
+export const periodCloseDb = {
+  close: (
+    monthKey: string,
+    closedBy: string,
+    balances: { opening: number; closing: number },
+    notes?: string,
+  ): void => {
+    db.prepare(
+      `INSERT INTO period_closes (month_key, closed_at, closed_by, jemaat_opening_balance, jemaat_closing_balance, notes)
+       VALUES (?, ?, ?, ?, ?, ?)
+       ON CONFLICT(month_key) DO UPDATE SET
+         closed_at = excluded.closed_at,
+         closed_by = excluded.closed_by,
+         jemaat_opening_balance = excluded.jemaat_opening_balance,
+         jemaat_closing_balance = excluded.jemaat_closing_balance,
+         notes = excluded.notes`,
+    ).run(
+      monthKey,
+      new Date().toISOString(),
+      closedBy,
+      balances.opening,
+      balances.closing,
+      notes ?? null,
+    );
+  },
+
+  isClosed: (monthKey: string): boolean =>
+    Boolean(
+      db
+        .prepare("SELECT 1 FROM period_closes WHERE month_key = ?")
+        .get(monthKey),
+    ),
+};
+
+/** A consistent copy of the live database, safe to take while the app runs. */
+export function snapshotDatabase(destination: string): void {
+  db.prepare("VACUUM INTO ?").run(destination);
+}
+
+/** Copies of the live database written before each restore, newest first. */
+export function listSafetyCopies(): Array<{ name: string; size: number; created_at: string }> {
+  return readdirSync(DATA_DIR)
+    .filter((f) => f.startsWith("efata.db.bak-"))
+    .map((name) => {
+      const st = statSync(join(DATA_DIR, name));
+      return { name, size: st.size, created_at: st.mtime.toISOString() };
+    })
+    .sort((a, b) => b.created_at.localeCompare(a.created_at));
+}
+
+export function readSafetyCopy(name: string): Buffer {
+  return readFileSync(join(DATA_DIR, name));
+}
+
+const REQUIRED_TABLES = ["accounts", "batches", "categories", "recipients", "transactions"];
+
+/**
+ * Replaces the live database with the SQLite file at `source`, through
+ * SQLite's online backup API so open connections see the new content without a
+ * half-written file. A safety copy of the current database is written first;
+ * its path is returned. The source must pass an integrity check and contain
+ * this app's core tables.
+ */
+export async function restoreDatabase(source: string): Promise<string> {
+  const incoming = new Database(source, { readonly: true, fileMustExist: true });
+  try {
+    const integrity = incoming.pragma("integrity_check", { simple: true });
+    if (integrity !== "ok") throw new Error(`File database rusak: ${integrity}`);
+    const tables = new Set(
+      (incoming.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as Array<{ name: string }>).map(
+        (r) => r.name,
+      ),
+    );
+    const missing = REQUIRED_TABLES.filter((t) => !tables.has(t));
+    if (missing.length) throw new Error(`Bukan database EFATA (tabel hilang: ${missing.join(", ")})`);
+
+    const stamp = new Date().toISOString().slice(0, 19).replace(/[-:T]/g, "").replace(/^(\d{8})/, "$1-");
+    const safety = join(DATA_DIR, `efata.db.bak-${stamp}-before-restore`);
+    snapshotDatabase(safety);
+    await incoming.backup(DB_PATH);
+    return safety;
+  } finally {
+    incoming.close();
+  }
+}
+
+export const giverStatementDb = createGiverStatementDb(db, env.AUTH_SECRET?.trim() || "");

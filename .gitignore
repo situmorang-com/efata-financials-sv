@@ -23,3 +23,17 @@ pnpm-debug.log*
 
 # Local data
 /data/
+
+# Church financial records and member-identifying data: never commit (the repo is public)
+/efata account statement report/
+/reports/
+/recipients.xlsx
+scripts/backfill-konferens-2026q1.mjs
+scripts/backfill-income-2026-apr-jul.mjs
+scripts/import-bank-books-2026.mjs
+scripts/resolve-review-lines.mjs
+scripts/backfill-counterparty.mjs
+scripts/merge-*.mjs
+
+# Local Claude Code config and worktrees
+/.claude/

@@ -124,6 +124,7 @@
 				payload = {
 					type: 'monthly',
 					name: `Transfer ${months[selectedMonth]} ${selectedYear}`,
+					period: `${selectedYear}-${String(selectedMonth + 1).padStart(2, '0')}`,
 					description: 'Transport & Zoom',
 					total_saturdays: formData.total_saturdays,
 					transport_rate: formData.transport_rate,

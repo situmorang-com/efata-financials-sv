@@ -28,6 +28,9 @@ COPY scripts ./scripts
 # Install only production dependencies
 RUN npm ci --omit=dev
 
+# Fail the build here, not at first request, if better-sqlite3 has no binary for this platform
+RUN node -e "new (require('better-sqlite3'))(':memory:').close()"
+
 # Copy built application from builder
 COPY --from=builder /app/build ./build
 COPY --from=builder /app/package.json ./

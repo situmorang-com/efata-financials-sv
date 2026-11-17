@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { formatRupiah } from '$lib/format.js';
+	import type { KonferensPayable } from '$lib/types.js';
 	import { addToast } from '$lib/stores/toast.svelte.js';
 	import Breadcrumbs from '$lib/components/Breadcrumbs.svelte';
 	import EmptyState from '$lib/components/EmptyState.svelte';
@@ -19,6 +20,8 @@
 		net_total: number;
 		pending_approvals: number;
 		expense_by_category: Array<{ category: string; total: number }>;
+		gross_received: number;
+		konferens: KonferensPayable;
 	};
 
 	type CashflowPoint = {
@@ -172,6 +175,7 @@
 		if (subType === 'offering') return 'Persembahan';
 		if (subType === 'other_income') return 'Lainnya';
 		if (subType === 'expense') return 'Expense';
+		if (subType === 'remittance') return 'Setoran Konferens';
 		return subType;
 	}
 
@@ -179,10 +183,18 @@
 		if (!summary) return;
 		const lines = [
 			['Month', summary.month],
-			['Income Total', String(summary.income_total)],
-			['Expense Total', String(summary.expense_total)],
-			['Net Total', String(summary.net_total)],
+			['Total Diterima (bruto)', String(summary.gross_received)],
+			['Pendapatan Jemaat', String(summary.income_total)],
+			['Beban Jemaat', String(summary.expense_total)],
+			['Surplus/Defisit Jemaat', String(summary.net_total)],
 			['Pending Approvals', String(summary.pending_approvals)],
+			[],
+			['Titipan Konferens', ''],
+			['Saldo awal utang', String(summary.konferens.opening)],
+			['Perpuluhan diterima', String(summary.konferens.tithe)],
+			['50% Terpadu bagian Konferens', String(summary.konferens.terpadu_konferens)],
+			['Disetor ke Konferens', String(summary.konferens.remitted)],
+			['Saldo akhir utang', String(summary.konferens.closing)],
 			[],
 			['Expense Category', 'Total']
 		];
@@ -227,7 +239,7 @@
 	<div class="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-3 mb-4 fade-up">
 		<div>
 			<h1 class="text-2xl font-bold text-white glow-text brand-font">Finance Reports</h1>
-			<p class="text-white/60 text-sm mt-1">Ringkasan income, expense, dan net berdasarkan bulan.</p>
+			<p class="text-white/60 text-sm mt-1">Pendapatan dan beban jemaat per bulan. Perpuluhan dan bagian Konferens dari persembahan terpadu adalah titipan, dilaporkan terpisah.</p>
 		</div>
 		<div class="flex items-center gap-2">
 			<input
@@ -260,21 +272,22 @@
 			<div class="glass-card rounded-2xl p-4">
 				<div class="flex items-center gap-2 mb-1">
 					<TrendingUp class="w-4 h-4 text-emerald-300" />
-					<p class="text-white/60 text-xs uppercase tracking-wider">Income</p>
+					<p class="text-white/60 text-xs uppercase tracking-wider">Pendapatan Jemaat</p>
 				</div>
 				<p class="text-2xl font-bold text-emerald-200">{formatRupiah(summary.income_total)}</p>
+				<p class="text-white/45 text-[11px] mt-1">dari {formatRupiah(summary.gross_received)} diterima</p>
 			</div>
 			<div class="glass-card rounded-2xl p-4">
 				<div class="flex items-center gap-2 mb-1">
 					<TrendingDown class="w-4 h-4 text-amber-300" />
-					<p class="text-white/60 text-xs uppercase tracking-wider">Expense</p>
+					<p class="text-white/60 text-xs uppercase tracking-wider">Beban Jemaat</p>
 				</div>
 				<p class="text-2xl font-bold text-amber-100">{formatRupiah(summary.expense_total)}</p>
 			</div>
 			<div class="glass-card rounded-2xl p-4">
 				<div class="flex items-center gap-2 mb-1">
 					<Scale class="w-4 h-4 text-sky-300" />
-					<p class="text-white/60 text-xs uppercase tracking-wider">Net</p>
+					<p class="text-white/60 text-xs uppercase tracking-wider">Surplus / Defisit</p>
 				</div>
 				<p class="text-2xl font-bold {summary.net_total >= 0 ? 'text-sky-200' : 'text-rose-200'}">{formatRupiah(summary.net_total)}</p>
 			</div>
@@ -284,6 +297,35 @@
 					<p class="text-white/60 text-xs uppercase tracking-wider">Pending Approval</p>
 				</div>
 				<p class="text-2xl font-bold text-rose-200">{summary.pending_approvals}</p>
+			</div>
+		</div>
+
+		<div class="glass-card rounded-2xl p-5 mb-4 fade-up">
+			<div class="flex flex-col sm:flex-row sm:items-baseline sm:justify-between gap-1 mb-3">
+				<h2 class="text-white font-semibold brand-font">Titipan Konferens ({summary.month})</h2>
+				<p class="text-white/45 text-xs">Perpuluhan 100% + 50% persembahan terpadu, dikurangi setoran</p>
+			</div>
+			<div class="grid grid-cols-2 lg:grid-cols-5 gap-2">
+				<div class="glass rounded-xl p-3">
+					<p class="text-[11px] uppercase tracking-wider text-white/50">Saldo awal</p>
+					<p class="text-white font-semibold mt-1">{formatRupiah(summary.konferens.opening)}</p>
+				</div>
+				<div class="glass rounded-xl p-3">
+					<p class="text-[11px] uppercase tracking-wider text-white/50">+ Perpuluhan</p>
+					<p class="text-white font-semibold mt-1">{formatRupiah(summary.konferens.tithe)}</p>
+				</div>
+				<div class="glass rounded-xl p-3">
+					<p class="text-[11px] uppercase tracking-wider text-white/50">+ 50% Terpadu</p>
+					<p class="text-white font-semibold mt-1">{formatRupiah(summary.konferens.terpadu_konferens)}</p>
+				</div>
+				<div class="glass rounded-xl p-3">
+					<p class="text-[11px] uppercase tracking-wider text-white/50">− Disetor</p>
+					<p class="text-white font-semibold mt-1">{formatRupiah(summary.konferens.remitted)}</p>
+				</div>
+				<div class="glass rounded-xl p-3 col-span-2 lg:col-span-1 border {summary.konferens.closing > 0 ? 'border-amber-400/30' : 'border-emerald-400/20'}">
+					<p class="text-[11px] uppercase tracking-wider text-white/50">Belum disetor</p>
+					<p class="font-semibold mt-1 {summary.konferens.closing > 0 ? 'text-amber-200' : 'text-emerald-200'}">{formatRupiah(summary.konferens.closing)}</p>
+				</div>
 			</div>
 		</div>
 

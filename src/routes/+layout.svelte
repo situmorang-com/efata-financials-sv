@@ -8,6 +8,7 @@
 	import Layers from '@lucide/svelte/icons/layers';
 	import Users from '@lucide/svelte/icons/users';
 	import Landmark from '@lucide/svelte/icons/landmark';
+	import ShieldCheck from '@lucide/svelte/icons/shield-check';
 	import Menu from '@lucide/svelte/icons/menu';
 	import X from '@lucide/svelte/icons/x';
 	import Sun from '@lucide/svelte/icons/sun';
@@ -24,9 +25,12 @@
 	let isLight = $derived(appliedTheme === 'light');
 	let session = $derived(data.session);
 	let isAuthPage = $derived(pathname.startsWith('/auth/'));
+	// Giver confirmation pages are sent to church members: no app navigation.
+	let isGiverPage = $derived(pathname.startsWith('/g/'));
 
 	const navItems = [
 		{ href: '/finance', label: 'Finance', icon: Landmark },
+		{ href: '/approvals', label: 'Approvals', icon: ShieldCheck },
 		{ href: '/batches', label: 'Batches', icon: Layers },
 		{ href: '/recipients', label: 'Recipients', icon: Users }
 	];
@@ -76,6 +80,7 @@
 	<div class="absolute inset-0 {isLight ? 'opacity-55 bg-[radial-gradient(circle_at_18%_8%,rgba(16,185,129,0.16),transparent_45%),radial-gradient(circle_at_80%_18%,rgba(14,165,233,0.18),transparent_40%),radial-gradient(circle_at_50%_92%,rgba(250,204,21,0.10),transparent_55%)]' : 'opacity-60 bg-[radial-gradient(circle_at_20%_10%,rgba(34,197,94,0.25),transparent_45%),radial-gradient(circle_at_80%_20%,rgba(56,189,248,0.25),transparent_40%),radial-gradient(circle_at_50%_90%,rgba(250,204,21,0.15),transparent_55%)]'}"></div>
 	<div class="absolute inset-0 {isLight ? 'opacity-25 bg-[linear-gradient(0deg,rgba(15,23,42,0.035)_1px,transparent_1px),linear-gradient(90deg,rgba(15,23,42,0.035)_1px,transparent_1px)]' : 'opacity-20 bg-[linear-gradient(0deg,rgba(255,255,255,0.03)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.03)_1px,transparent_1px)]'} bg-[size:28px_28px]"></div>
 
+	{#if !isGiverPage}
 	<nav class="relative z-20">
 		<div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
 			<div class="h-16 flex items-center justify-between">
@@ -225,6 +230,8 @@
 				</div>
 			</nav>
 		</div>
+	{/if}
+
 	{/if}
 
 	<main class="relative z-10">

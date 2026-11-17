@@ -229,7 +229,8 @@
 	function openEdit(item: FinanceTransaction) {
 		editingItemId = item.id ?? null;
 		editCoreLocked = isReconciledIncome(item);
-		editForm.sub_type = item.sub_type === 'expense' ? 'other_income' : item.sub_type;
+		editForm.sub_type =
+			item.sub_type === 'tithe' || item.sub_type === 'offering' ? item.sub_type : 'other_income';
 		editForm.party_id = item.party_id ? String(item.party_id) : '';
 		editForm.category_id = item.category_id ? String(item.category_id) : '';
 		const resolvedAccountId = item.resolved_account_id ?? item.account_id ?? item.source_linked_account_id ?? null;

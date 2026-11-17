@@ -5,6 +5,7 @@
 	import VideoOff from '@lucide/svelte/icons/video-off';
 	import Users2 from '@lucide/svelte/icons/users-2';
 	import UserX from '@lucide/svelte/icons/user-x';
+	import { todayJakarta } from '$lib/membership.js';
 
 	let {
 		recipient = undefined,
@@ -27,7 +28,9 @@
 			keterangan: currentRecipient?.keterangan || '',
 			transfer_to_id: currentRecipient?.transfer_to_id || 0,
 			zoom_eligible: currentRecipient?.zoom_eligible ?? 1,
-			family_group_id: currentRecipient?.family_group_id ?? null as number | null
+			family_group_id: currentRecipient?.family_group_id ?? null as number | null,
+			start_date: currentRecipient?.start_date || todayJakarta(),
+			end_date: currentRecipient?.end_date || ''
 		};
 	}
 
@@ -70,6 +73,8 @@
 	const recipientTransferToId = 'recipient-transfer-to';
 	const recipientZoomEligibleId = 'recipient-zoom-eligible';
 	const recipientFamilyId = 'recipient-family';
+	const recipientStartId = 'recipient-start-date';
+	const recipientEndId = 'recipient-end-date';
 
 	function validate(): boolean {
 		errors = {};
@@ -78,11 +83,14 @@
 			errors.whatsapp = 'Format nomor tidak valid (08xx atau 628xx)';
 		if (formData.account_number && formData.account_number.trim().length < 5)
 			errors.account_number = 'Nomor rekening minimal 5 digit';
+		if (!formData.start_date) errors.start_date = 'Tanggal mulai wajib diisi';
+		if (formData.end_date && formData.start_date && formData.end_date < formData.start_date)
+			errors.end_date = 'Tanggal berhenti tidak boleh sebelum tanggal mulai';
 		return Object.keys(errors).length === 0;
 	}
 
 	function handleSubmit() {
-		touched = { name: true, whatsapp: true, account_number: true };
+		touched = { name: true, whatsapp: true, account_number: true, start_date: true, end_date: true };
 		if (!validate()) return;
 		onSubmit({
 			name: formData.name.trim(),
@@ -92,7 +100,10 @@
 			keterangan: formData.keterangan.trim() || undefined,
 			transfer_to_id: formData.transfer_to_id || undefined,
 			zoom_eligible: formData.zoom_eligible,
-			family_group_id: formData.family_group_id
+			family_group_id: formData.family_group_id,
+			start_date: formData.start_date,
+			// Only sent when editing someone who already has an end date
+			...(recipient?.end_date ? { end_date: formData.end_date || null } : {})
 		});
 	}
 
@@ -173,6 +184,45 @@
 				</p>
 			{/if}
 		</div>
+		<div>
+			<label for={recipientStartId} class="block text-white/70 text-xs uppercase tracking-wider mb-1.5">Tanggal Mulai *</label>
+			<input
+				id={recipientStartId}
+				type="date"
+				bind:value={formData.start_date}
+				class={fieldClass('start_date')}
+				onblur={() => { touched.start_date = true; validate(); }}
+				required
+			/>
+			{#if touched.start_date && errors.start_date}
+				<p class="flex items-center gap-1 text-red-400 text-xs mt-1">
+					<CircleAlert class="w-3 h-3" />
+					{errors.start_date}
+				</p>
+			{:else}
+				<p class="text-white/40 text-xs mt-1">Ikut batch mulai bulan ini.</p>
+			{/if}
+		</div>
+		{#if recipient?.end_date}
+			<div>
+				<label for={recipientEndId} class="block text-white/70 text-xs uppercase tracking-wider mb-1.5">Tanggal Berhenti</label>
+				<input
+					id={recipientEndId}
+					type="date"
+					bind:value={formData.end_date}
+					class={fieldClass('end_date')}
+					onblur={() => { touched.end_date = true; validate(); }}
+				/>
+				{#if touched.end_date && errors.end_date}
+					<p class="flex items-center gap-1 text-red-400 text-xs mt-1">
+						<CircleAlert class="w-3 h-3" />
+						{errors.end_date}
+					</p>
+				{:else}
+					<p class="text-white/40 text-xs mt-1">Kosongkan jika masih aktif.</p>
+				{/if}
+			</div>
+		{/if}
 		<div>
 			<label for={recipientKeteranganId} class="block text-white/70 text-xs uppercase tracking-wider mb-1.5">Keterangan</label>
 			<input
