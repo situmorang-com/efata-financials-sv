@@ -30,6 +30,10 @@ export function generateWhatsAppMessage(
 		transfer_to_name?: string;
 		actual_bank_name?: string;
 		actual_account_number?: string;
+		/** Name on the account when it isn't the recipient's own (an outside holder). */
+		account_holder_name?: string;
+		/** What the account holder is to the recipient, e.g. "Anak". */
+		account_holder_relation?: string;
 		family_member_names?: string[];
 		family_total_transfer?: number;
 		batch_label?: string;
@@ -49,6 +53,14 @@ export function generateWhatsAppMessage(
 		accountBank || accountNumber
 			? `${accountBank}${accountBank && accountNumber ? ' ' : ''}${accountNumber}`.trim()
 			: '';
+	// Who the money actually went to, when it isn't the recipient's own account:
+	// an outside holder recorded on the recipient, else the recipient it is sent
+	// through ("Transfer ke"). With the relationship, e.g. "Joanita Paulina (Anak)".
+	const holderName =
+		transferInfo?.account_holder_name?.trim() ||
+		(payeeName.toLowerCase() !== name.trim().toLowerCase() ? payeeName : '');
+	const holderRelation = transferInfo?.account_holder_relation?.trim() || '';
+	const viaLabel = holderName ? `${holderName}${holderRelation ? ` (${holderRelation})` : ''}` : '';
 	const familyMembers = Array.from(
 		new Set(
 			(transferInfo?.family_member_names || [])
@@ -76,7 +88,7 @@ export function generateWhatsAppMessage(
 		];
 		lines.push('');
 		lines.push('☑️ Transfer keluarga (1 rekening):');
-		lines.push(`➡️ Melalui: ${payeeName}`);
+		lines.push(`➡️ Melalui: ${viaLabel || payeeName}`);
 		if (accountLabel) {
 			lines.push(`➡️ Rekening tujuan: ${accountLabel}`);
 		}
@@ -138,6 +150,9 @@ export function generateWhatsAppMessage(
 		} else {
 			lines.push('➡️ Rekening tujuan: rekening Anda');
 		}
+		if (viaLabel) {
+			lines.push(`➡️ Melalui: ${viaLabel}`);
+		}
 		lines.push(`✅ Total transfer ke rekening ini: ${formatRupiah(amount)}`);
 
 		lines.push('');
@@ -177,6 +192,9 @@ export function generateWhatsAppMessage(
 		? `➡️ Rekening tujuan: ${accountLabel}`
 		: '➡️ Rekening tujuan: rekening Anda';
 	let msg = `Halo ${name},\n\n✅ Dana Tuli EFATA sebesar *${formatRupiah(amount)}* sudah ditransfer.\n${accountSentence}`;
+	if (viaLabel) {
+		msg += `\n➡️ Melalui: ${viaLabel}`;
+	}
 	msg += '\nMohon dicek ya.\nTerima kasih. Tuhan memberkati.';
 	if (proofUrl) {
 		msg += `\n\n✅ Bukti transfer: ${proofUrl}`;
@@ -201,6 +219,10 @@ export function generateWhatsAppUrl(
 		transfer_to_name?: string;
 		actual_bank_name?: string;
 		actual_account_number?: string;
+		/** Name on the account when it isn't the recipient's own (an outside holder). */
+		account_holder_name?: string;
+		/** What the account holder is to the recipient, e.g. "Anak". */
+		account_holder_relation?: string;
 		family_member_names?: string[];
 		family_total_transfer?: number;
 		batch_label?: string;

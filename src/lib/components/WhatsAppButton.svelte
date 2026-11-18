@@ -20,6 +20,8 @@
 			transfer_to_name?: string;
 			actual_bank_name?: string;
 			actual_account_number?: string;
+			account_holder_name?: string;
+			account_holder_relation?: string;
 			family_member_names?: string[];
 			family_total_transfer?: number;
 			batch_label?: string;

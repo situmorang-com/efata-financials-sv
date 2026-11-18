@@ -24,6 +24,7 @@
 	import { DEFAULT_SOURCE_BANK, getTransferFee } from '$lib/transfer-fee.js';
 	import { buildPaymentLines, familyLead, familyTransferKey, sortFamilyMembers, type PaymentLine } from '$lib/payments.js';
 	import Wallet from '@lucide/svelte/icons/wallet';
+	import Check from '@lucide/svelte/icons/check';
 	import { searchShortcut, searchShortcutLabel } from '$lib/actions/search-shortcut.js';
 	import CircleDollarSign from '@lucide/svelte/icons/circle-dollar-sign';
 	import CalendarDays from '@lucide/svelte/icons/calendar-days';
@@ -353,6 +354,8 @@
 		transfer_to_name?: string;
 		actual_bank_name?: string;
 		actual_account_number?: string;
+		account_holder_name?: string;
+		account_holder_relation?: string;
 		family_member_names?: string[];
 		family_total_transfer?: number;
 		batch_label?: string;
@@ -368,6 +371,8 @@
 			transfer_to_name: item.transfer_to_name || item.actual_account_holder || item.recipient_name,
 			actual_bank_name: item.actual_bank_name || item.bank_name,
 			actual_account_number: item.actual_account_number || item.account_number,
+			account_holder_name: item.account_holder_name || undefined,
+			account_holder_relation: item.account_holder_relation || undefined,
 			batch_label: batchLabel
 		};
 		if (!item.id) {
@@ -1353,19 +1358,25 @@
 									</td>
 									<td class="px-1 py-2.5 text-center">
 										{#if isCash(item)}
+											<!-- Icon only: the TF column is too narrow for "Bayar" and would spill into WA. -->
 											<button
 												type="button"
 												disabled={!isEditMode}
 												onclick={() => toggleCashPaid(item)}
-												title={!isEditMode ? 'Aktifkan Edit untuk mengubah status' : undefined}
-												class="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium transition-all
+												title={!isEditMode
+													? 'Aktifkan Edit untuk mengubah status'
+													: item.transfer_status === 'done'
+														? 'Sudah dibayar tunai (klik untuk batalkan)'
+														: 'Bayar tunai'}
+												aria-label={item.transfer_status === 'done' ? 'Sudah dibayar tunai' : 'Bayar tunai'}
+												class="mx-auto flex items-center rounded-lg p-1.5 transition-all
 													{item.transfer_status === 'done'
 														? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 hover:bg-emerald-500/30'
 														: 'bg-amber-500/15 text-amber-300 border border-amber-500/30 hover:bg-amber-500/25'}
 													{!isEditMode ? 'opacity-60 cursor-not-allowed' : ''}"
 											>
 												<Banknote class="w-3.5 h-3.5" />
-												{item.transfer_status === 'done' ? 'Cash' : 'Bayar'}
+												{#if item.transfer_status === 'done'}<Check class="w-3 h-3 -ml-0.5" />{/if}
 											</button>
 										{:else}
 											<TransferProof
