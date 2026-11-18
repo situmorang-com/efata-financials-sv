@@ -295,7 +295,9 @@
 										{/if}
 									</span>
 									{#if line.viaName}
-										<span class="text-amber-200/80 text-xs">via {line.viaName}</span>
+										<span class="text-amber-200/80 text-xs">
+											via {line.viaName}{#if line.viaRelation}&nbsp;({line.viaRelation}){/if}
+										</span>
 									{/if}
 									<span class="text-[11px] px-2 py-0.5 rounded-full border {statusClass(line.status)}">
 										{STATUS_LABEL[line.status]}

@@ -45,6 +45,8 @@ export const POST: RequestHandler = async ({ request }) => {
 			whatsapp: data.whatsapp,
 			keterangan: data.keterangan,
 			transfer_to_id: data.transfer_to_id,
+			account_holder_name: data.account_holder_name,
+			account_holder_relation: data.account_holder_relation,
 			family_group_id: familyGroupId,
 			zoom_eligible: data.zoom_eligible ?? 1,
 			is_active: 1,

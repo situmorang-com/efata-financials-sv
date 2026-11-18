@@ -252,6 +252,15 @@
 		return line ? { reference: line.reference, remark: line.remark } : null;
 	}
 
+	// "via <account holder> (relationship)" when the money goes to an account
+	// that is not in the recipient's own name; null for their own account.
+	function rowVia(item: BatchItem): string | null {
+		const holder = (item.account_holder_name || '').trim() || item.transfer_to_name;
+		if (!holder) return null;
+		const relation = (item.account_holder_relation || '').trim();
+		return relation ? `via ${holder} (${relation})` : `via ${holder}`;
+	}
+
 	function getFamilyTransferKey(item: BatchItem): string | null {
 		return familyTransferKey(item);
 	}
@@ -1174,8 +1183,8 @@
 									<td class="px-3 py-2.5 text-white/50 text-sm">{i + 1}</td>
 									<td class="px-3 py-2.5">
 										<div class="text-white text-sm font-medium">{item.recipient_name}</div>
-										{#if item.transfer_to_name}
-											<div class="text-amber-200/80 text-xs">via {item.transfer_to_name}</div>
+										{#if rowVia(item)}
+											<div class="text-amber-200/80 text-xs">{rowVia(item)}</div>
 										{/if}
 									</td>
 									<td class="px-3 py-2.5">
@@ -1408,8 +1417,8 @@
 									<span class="text-white/40 text-xs">{i + 1}.</span>
 									<p class="text-white font-medium text-sm truncate">{item.recipient_name}</p>
 								</div>
-								{#if item.transfer_to_name}
-									<p class="text-amber-200/70 text-xs mt-0.5 ml-5">via {item.transfer_to_name}</p>
+								{#if rowVia(item)}
+									<p class="text-amber-200/70 text-xs mt-0.5 ml-5">{rowVia(item)}</p>
 								{/if}
 								<div class="mt-1 ml-5">
 									{#if isCash(item)}

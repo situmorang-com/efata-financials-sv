@@ -80,6 +80,17 @@ describe('buildPaymentLines', () => {
 		]);
 	});
 
+	it('uses the recorded account holder and relationship for an outside account', () => {
+		const eli = row(380, 'Eli', 150000, { account_holder_name: ' Jo Paulina ', account_holder_relation: 'Anak' });
+		const [line] = buildPaymentLines(batch, [eli], opts);
+		expect(line.payeeName).toBe('Jo Paulina');
+		expect(line.viaName).toBe('Jo Paulina');
+		expect(line.viaRelation).toBe('Anak');
+		// The relationship of a "via" recipient is shown too; the holder's own row adds none.
+		const family = buildPaymentLines(batch, [{ ...ani, account_holder_relation: 'suami' }, budi], opts)[0];
+		expect([family.viaName, family.viaRelation]).toEqual(['Budi', 'suami']);
+	});
+
 	it('leaves rows without an amount out, but keeps the family reference', () => {
 		const lines = buildPaymentLines(batch, [{ ...ani, amount: 0 }, budi], opts);
 		expect(lines).toHaveLength(1);

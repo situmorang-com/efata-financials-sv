@@ -10,6 +10,13 @@ export interface Recipient {
   keterangan?: string;
   transfer_to_id?: number;
   transfer_to_name?: string;
+  /**
+   * Whose name is on the bank account, when it is not the recipient's own and
+   * that person is not a recipient (otherwise use transfer_to_id). Empty = own.
+   */
+  account_holder_name?: string | null;
+  /** What the account holder is to this recipient, e.g. "anak", "suami". */
+  account_holder_relation?: string | null;
   family_group_id?: number | null;
   zoom_eligible: number; // 1 = eligible, 0 = not eligible
   is_active: number;
@@ -94,6 +101,10 @@ export interface BatchItem {
   actual_bank_name?: string;
   actual_account_number?: string;
   actual_account_holder?: string;
+  /** Name on the account actually paid into, when it is not a recipient's own name. */
+  account_holder_name?: string | null;
+  /** What the account holder is to this row's recipient. */
+  account_holder_relation?: string | null;
   family_group_id?: number | null;
   transfer_fee: number;
 }

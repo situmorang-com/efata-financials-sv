@@ -885,6 +885,14 @@ if (!columnExists("batches", "cash_payout_submitted_at")) {
 if (!columnExists("batches", "cash_payout_done_at")) {
   db.exec("ALTER TABLE batches ADD COLUMN cash_payout_done_at TEXT");
 }
+// Whose name is on a recipient's bank account when it is neither their own nor
+// another recipient's (e.g. a relative), and what that person is to them.
+if (!columnExists("recipients", "account_holder_name")) {
+  db.exec("ALTER TABLE recipients ADD COLUMN account_holder_name TEXT");
+}
+if (!columnExists("recipients", "account_holder_relation")) {
+  db.exec("ALTER TABLE recipients ADD COLUMN account_holder_relation TEXT");
+}
 // Small key/value settings kept in the database because they must not be in
 // the (public) code, e.g. the cash distributor's bank account.
 db.exec(`
@@ -929,6 +937,15 @@ const updateRecipient = db.prepare(`
   SET name = ?, bank_name = ?, account_number = ?, whatsapp = ?, keterangan = ?, transfer_to_id = ?, family_group_id = ?, zoom_eligible = ?, is_active = ?, updated_at = ?
   WHERE id = ?
 `);
+
+const updateRecipientHolder = db.prepare(`
+  UPDATE recipients SET account_holder_name = ?, account_holder_relation = ? WHERE id = ?
+`);
+
+function holderText(value: unknown): string | null {
+  const text = String(value ?? "").replace(/\s+/g, " ").trim().slice(0, 80);
+  return text || null;
+}
 
 // Every recipient read carries its latest membership period (start/end date).
 const RECIPIENT_SELECT = `
@@ -1077,6 +1094,10 @@ const selectBatchItems = db.prepare(`
     r.family_group_id,
     rt.name AS transfer_to_name,
     COALESCE(rt.name, r.name) AS actual_account_holder,
+    -- The name on the account actually paid into, when it is not a recipient's
+    -- own: the "via" recipient's account holder, else this recipient's.
+    CASE WHEN r.transfer_to_id IS NOT NULL THEN rt.account_holder_name ELSE r.account_holder_name END AS account_holder_name,
+    r.account_holder_relation AS account_holder_relation,
     COALESCE(rt.bank_name, r.bank_name) AS actual_bank_name,
     COALESCE(rt.account_number, r.account_number) AS actual_account_number
   FROM batch_items bi
@@ -1189,6 +1210,11 @@ export const recipientDb = {
       now,
     );
     const id = result.lastInsertRowid as number;
+    updateRecipientHolder.run(
+      holderText(recipient.account_holder_name),
+      holderText(recipient.account_holder_relation),
+      id,
+    );
     insertPeriod.run(
       id,
       recipient.start_date || todayJakarta(),
@@ -1216,6 +1242,11 @@ export const recipientDb = {
       updated.zoom_eligible ?? 1,
       updated.is_active,
       now,
+      id,
+    );
+    updateRecipientHolder.run(
+      holderText(updated.account_holder_name),
+      holderText(updated.account_holder_relation),
       id,
     );
     return result.changes > 0;

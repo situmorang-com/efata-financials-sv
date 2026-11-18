@@ -42,6 +42,8 @@ export type PaymentLine = {
 	 * this account holder. Always set for a family paid into one account.
 	 */
 	viaName: string | null;
+	/** What the account holder is to the recipient(s) paid through them, e.g. "anak". */
+	viaRelation: string | null;
 	bankName: string;
 	/** As stored on the recipient. */
 	accountNumber: string;
@@ -152,13 +154,25 @@ function buildCashGroups(cash: BatchItem[]): CashGroup[] {
 function transferLine(batch: Batch, lead: BatchItem, paid: BatchItem[], sourceBank: SourceBank): PaymentLine {
 	const bankName = lead.actual_bank_name || lead.bank_name || '';
 	const accountNumber = lead.actual_account_number || lead.account_number || '';
-	const payeeName = lead.transfer_to_name || lead.actual_account_holder || lead.recipient_name || '-';
+	// The name on the bank account: an outside holder recorded on the recipient,
+	// else the recipient the money is sent through, else the recipient.
+	const payeeName =
+		(lead.account_holder_name || '').trim() ||
+		lead.transfer_to_name ||
+		lead.actual_account_holder ||
+		lead.recipient_name ||
+		'-';
+	const throughHolder = paid.filter((m) => (m.recipient_name || '-') !== payeeName);
+	const relations = [
+		...new Set(throughHolder.map((m) => (m.account_holder_relation || '').trim()).filter(Boolean))
+	];
 	return {
 		key: `item:${lead.id}`,
 		kind: 'transfer',
 		itemIds: paid.map((m) => m.id!),
 		payeeName,
-		viaName: paid.some((m) => (m.recipient_name || '-') !== payeeName) ? payeeName : null,
+		viaName: throughHolder.length > 0 ? payeeName : null,
+		viaRelation: throughHolder.length > 0 && relations.length > 0 ? relations.join(', ') : null,
 		bankName,
 		accountNumber,
 		payAccountNumber: payAccountNumber(bankName, accountNumber, sourceBank),
@@ -217,6 +231,7 @@ export function buildPaymentLines(
 			itemIds: cash.map((m) => m.id!),
 			payeeName: cashDistributor?.name || '',
 			viaName: null,
+			viaRelation: null,
 			bankName,
 			accountNumber: cashDistributor?.account_number || '',
 			payAccountNumber: digits(cashDistributor?.account_number),

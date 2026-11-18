@@ -27,6 +27,8 @@
 			whatsapp: currentRecipient?.whatsapp || '',
 			keterangan: currentRecipient?.keterangan || '',
 			transfer_to_id: currentRecipient?.transfer_to_id || 0,
+			account_holder_name: currentRecipient?.account_holder_name || '',
+			account_holder_relation: currentRecipient?.account_holder_relation || '',
 			zoom_eligible: currentRecipient?.zoom_eligible ?? 1,
 			family_group_id: currentRecipient?.family_group_id ?? null as number | null,
 			start_date: currentRecipient?.start_date || todayJakarta(),
@@ -99,6 +101,13 @@
 			whatsapp: formData.whatsapp.trim() || undefined,
 			keterangan: formData.keterangan.trim() || undefined,
 			transfer_to_id: formData.transfer_to_id || undefined,
+			// Sent as '' when emptied, so a value can be cleared. The holder name only
+			// applies to the recipient's own account number, not to "Transfer ke".
+			account_holder_name: formData.transfer_to_id ? '' : formData.account_holder_name.trim(),
+			account_holder_relation:
+				formData.transfer_to_id || formData.account_holder_name.trim()
+					? formData.account_holder_relation.trim()
+					: '',
 			zoom_eligible: formData.zoom_eligible,
 			family_group_id: formData.family_group_id,
 			start_date: formData.start_date,
@@ -246,6 +255,40 @@
 				{/each}
 			</select>
 		</div>
+		{#if !formData.transfer_to_id}
+			<div>
+				<label for="recipient-holder-name" class="block text-white/70 text-xs uppercase tracking-wider mb-1.5">Nama pemilik rekening</label>
+				<input
+					id="recipient-holder-name"
+					type="text"
+					bind:value={formData.account_holder_name}
+					maxlength="80"
+					class="w-full glass-input rounded-xl px-4 py-2.5 text-white text-sm placeholder-white/30 focus:outline-none focus:ring-2 focus:ring-emerald-500/30"
+					placeholder="Kosongkan jika rekening atas nama sendiri"
+				/>
+				<p class="text-white/40 text-xs mt-1">Nama yang muncul di bank untuk nomor rekening di atas, jika bukan nama penerima.</p>
+			</div>
+		{/if}
+		{#if formData.transfer_to_id || formData.account_holder_name.trim()}
+			<div>
+				<label for="recipient-holder-relation" class="block text-white/70 text-xs uppercase tracking-wider mb-1.5">Hubungan pemilik rekening</label>
+				<input
+					id="recipient-holder-relation"
+					type="text"
+					list="recipient-holder-relations"
+					bind:value={formData.account_holder_relation}
+					maxlength="80"
+					class="w-full glass-input rounded-xl px-4 py-2.5 text-white text-sm placeholder-white/30 focus:outline-none focus:ring-2 focus:ring-emerald-500/30"
+					placeholder="mis. anak, suami, saudara"
+				/>
+				<datalist id="recipient-holder-relations">
+					{#each ['Suami', 'Istri', 'Anak', 'Orang tua', 'Saudara', 'Menantu', 'Cucu', 'Kerabat', 'Teman'] as relation}
+						<option value={relation}></option>
+					{/each}
+				</datalist>
+				<p class="text-white/40 text-xs mt-1">Pemilik rekening ini siapanya penerima.</p>
+			</div>
+		{/if}
 	</div>
 
 	<!-- Zoom & Family Settings -->

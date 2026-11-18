@@ -274,7 +274,12 @@ export const GET: RequestHandler = async ({ params, url }) => {
 
       transfers.forEach((line, index) => {
         const isFamily = line.members.length > 1;
-        const rowHeight = Math.max(2, line.members.length) * 11 + 9;
+        // Via: the account holder on up to two lines, then the relationship.
+        const viaLines = line.viaName
+          ? wrapTwo(withoutPhoneNumbers(line.viaName), colWidth.via, 8)
+          : [];
+        const viaRows = viaLines.length + (line.viaRelation ? 1 : 0);
+        const rowHeight = Math.max(2, line.members.length, viaRows) * 11 + 9;
         ensure(rowHeight, transferHeader);
 
         const top = y - 12;
@@ -314,9 +319,14 @@ export const GET: RequestHandler = async ({ params, url }) => {
           top,
           { size: 8.5, maxWidth: colWidth.account },
         );
-        if (line.viaName) {
-          wrapTwo(withoutPhoneNumbers(line.viaName), colWidth.via, 8).forEach((text, i) => {
-            draw(text, col.via, top - i * 10, { size: 8 });
+        viaLines.forEach((text, i) => {
+          draw(text, col.via, top - i * 11, { size: 8 });
+        });
+        if (line.viaRelation) {
+          draw(`(${line.viaRelation})`, col.via, top - viaLines.length * 11, {
+            size: 7.5,
+            color: muted,
+            maxWidth: colWidth.via,
           });
         }
 
