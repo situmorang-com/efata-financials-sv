@@ -35,7 +35,13 @@ export type PaymentLine = {
 	kind: 'transfer' | 'cash';
 	/** Batch rows this transfer pays (rows with an amount only). */
 	itemIds: number[];
+	/** Who holds the account the money is sent to (the cash distributor on the cash line). */
 	payeeName: string;
+	/**
+	 * Set when the account is not the recipient's own: the money reaches them via
+	 * this account holder. Always set for a family paid into one account.
+	 */
+	viaName: string | null;
 	bankName: string;
 	/** As stored on the recipient. */
 	accountNumber: string;
@@ -146,11 +152,13 @@ function buildCashGroups(cash: BatchItem[]): CashGroup[] {
 function transferLine(batch: Batch, lead: BatchItem, paid: BatchItem[], sourceBank: SourceBank): PaymentLine {
 	const bankName = lead.actual_bank_name || lead.bank_name || '';
 	const accountNumber = lead.actual_account_number || lead.account_number || '';
+	const payeeName = lead.transfer_to_name || lead.actual_account_holder || lead.recipient_name || '-';
 	return {
 		key: `item:${lead.id}`,
 		kind: 'transfer',
 		itemIds: paid.map((m) => m.id!),
-		payeeName: lead.transfer_to_name || lead.actual_account_holder || lead.recipient_name || '-',
+		payeeName,
+		viaName: paid.some((m) => (m.recipient_name || '-') !== payeeName) ? payeeName : null,
 		bankName,
 		accountNumber,
 		payAccountNumber: payAccountNumber(bankName, accountNumber, sourceBank),
@@ -196,7 +204,9 @@ export function buildPaymentLines(
 	for (const item of singles) {
 		if ((item.amount || 0) > 0) lines.push(transferLine(batch, item, [item], sourceBank));
 	}
-	lines.sort((a, b) => a.payeeName.localeCompare(b.payeeName) || a.key.localeCompare(b.key));
+	// By recipient, like the batch page: the people are what the reader looks for.
+	const firstName = (line: PaymentLine) => line.members[0]?.name || '';
+	lines.sort((a, b) => firstName(a).localeCompare(firstName(b)) || a.key.localeCompare(b.key));
 
 	const cash = sortFamilyMembers(items.filter((item) => item.id && isCashItem(item) && (item.amount || 0) > 0));
 	if (cash.length > 0) {
@@ -206,6 +216,7 @@ export function buildPaymentLines(
 			kind: 'cash',
 			itemIds: cash.map((m) => m.id!),
 			payeeName: cashDistributor?.name || '',
+			viaName: null,
 			bankName,
 			accountNumber: cashDistributor?.account_number || '',
 			payAccountNumber: digits(cashDistributor?.account_number),

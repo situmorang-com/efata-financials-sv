@@ -61,11 +61,23 @@ describe('buildPaymentLines', () => {
 		expect(lines.map((l) => l.key)).toEqual(['item:310', 'item:330']);
 		const family = lines[0];
 		expect(family.payeeName).toBe('Budi');
+		expect(family.viaName).toBe('Budi');
+		expect(lines[1].viaName).toBeNull();
 		expect(family.amount).toBe(260000);
 		expect(family.fee).toBe(2500);
 		expect(family.itemIds).toEqual([310, 320]);
 		expect(family.reference).toBe('EF2610B12R310');
 		expect(family.remark).toBe('EFATA Oktober 2026 (2 orang) - Ani / Budi');
+	});
+
+	it('names the account holder when a recipient is paid through someone else', () => {
+		const zed = row(370, 'Zed', 50000, { transfer_to_id: 98, transfer_to_name: 'Citra', actual_account_holder: 'Citra' });
+		const lines = buildPaymentLines(batch, [zed, citra], opts);
+		// Sorted by recipient, not by account holder.
+		expect(lines.map((l) => [l.members[0].name, l.viaName])).toEqual([
+			['Citra', null],
+			['Zed', 'Citra']
+		]);
 	});
 
 	it('leaves rows without an amount out, but keeps the family reference', () => {

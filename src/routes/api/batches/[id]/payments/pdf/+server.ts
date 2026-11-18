@@ -215,14 +215,37 @@ export const GET: RequestHandler = async ({ params, url }) => {
 
     // --- A. Bank transfers ---
     // Columns: No | Ref + status | Rekening tujuan | Untuk | Jumlah
+    // Columns: No | Ref + status | Penerima | Rekening tujuan | Via | Jumlah.
+    // The recipient comes first; "Via" is filled only when the money goes to
+    // someone else's account, so those rows stand out.
     const col = {
       no: margin + 4,
-      ref: margin + 24,
-      payee: margin + 116,
-      members: margin + 276,
+      ref: margin + 22,
+      recipient: margin + 98,
+      account: margin + 270,
+      via: margin + 386,
       amountRight: right - 4,
     };
-    const colWidth = { ref: 88, payee: 154, members: 172 };
+    const colWidth = { ref: 74, recipient: 166, account: 112, via: 78 };
+
+    /** Breaks text into at most two lines that fit the width. */
+    const wrapTwo = (text: string, maxWidth: number, size: number): string[] => {
+      const words = pdfSafe(text).split(" ").filter(Boolean);
+      const lines: string[] = [];
+      let current = "";
+      for (const word of words) {
+        const next = current ? `${current} ${word}` : word;
+        if (!current || widthOf(next, size) <= maxWidth) {
+          current = next;
+        } else {
+          lines.push(current);
+          current = word;
+        }
+      }
+      if (current) lines.push(current);
+      if (lines.length <= 2) return lines.map((line) => fit(line, maxWidth, size));
+      return [fit(lines[0], maxWidth, size), fit(lines.slice(1).join(" "), maxWidth, size)];
+    };
 
     const transferHeader = () => {
       page.drawRectangle({
@@ -236,8 +259,9 @@ export const GET: RequestHandler = async ({ params, url }) => {
       const opts = { size: 8, bold: true, color: muted };
       draw("No", col.no, hy, opts);
       draw("Ref", col.ref, hy, opts);
-      draw("Rekening tujuan", col.payee, hy, opts);
-      draw("Untuk", col.members, hy, opts);
+      draw("Penerima", col.recipient, hy, opts);
+      draw("Rekening tujuan", col.account, hy, opts);
+      draw("Via (pemilik rek.)", col.via, hy, opts);
       drawRight("Jumlah", col.amountRight, hy, opts);
       y -= 16;
     };
@@ -250,42 +274,52 @@ export const GET: RequestHandler = async ({ params, url }) => {
 
       transfers.forEach((line, index) => {
         const isFamily = line.members.length > 1;
-        const memberRows = isFamily ? line.members.length : 1;
-        const rowHeight = Math.max(2, memberRows) * 11 + 9;
+        const rowHeight = Math.max(2, line.members.length) * 11 + 9;
         ensure(rowHeight, transferHeader);
 
         const top = y - 12;
         draw(String(index + 1), col.no, top, { color: muted });
         draw(line.reference, col.ref, top, { size: 8.5, bold: true, maxWidth: colWidth.ref });
         draw(STATUS_LABEL[line.status], col.ref, top - 11, { size: 7.5, color: muted });
-        draw(line.payeeName, col.payee, top, { bold: true, maxWidth: colWidth.payee });
-        draw(
-          line.payAccountNumber
-            ? `${line.bankName} ${line.payAccountNumber}`
-            : "(rekening belum diisi)",
-          col.payee,
-          top - 11,
-          { size: 8.5, maxWidth: colWidth.payee },
-        );
+
         // Names only: a phone number kept in a name is not for the approver.
         if (isFamily) {
           line.members.forEach((member, i) => {
             const memberY = top - i * 11;
-            draw(withoutPhoneNumbers(member.name), col.members, memberY, {
+            draw(withoutPhoneNumbers(member.name), col.recipient, memberY, {
               size: 8,
-              maxWidth: colWidth.members - 48,
+              bold: true,
+              maxWidth: colWidth.recipient - 34,
             });
-            drawRight(rupiah(member.amount), col.members + colWidth.members, memberY, {
-              size: 8,
-              color: muted,
-            });
+            // Each member's share, without "Rp" to leave room for long names.
+            drawRight(
+              Math.round(member.amount).toLocaleString("id-ID"),
+              col.recipient + colWidth.recipient - 4,
+              memberY,
+              { size: 8, color: muted },
+            );
           });
-        } else if (line.members[0] && line.members[0].name !== line.payeeName) {
-          draw(withoutPhoneNumbers(line.members[0].name), col.members, top, {
-            size: 8,
-            maxWidth: colWidth.members,
+        } else {
+          draw(withoutPhoneNumbers(line.members[0]?.name || line.payeeName), col.recipient, top, {
+            bold: true,
+            maxWidth: colWidth.recipient - 4,
           });
         }
+
+        draw(
+          line.payAccountNumber
+            ? `${line.bankName} ${line.payAccountNumber}`
+            : "(rekening belum diisi)",
+          col.account,
+          top,
+          { size: 8.5, maxWidth: colWidth.account },
+        );
+        if (line.viaName) {
+          wrapTwo(withoutPhoneNumbers(line.viaName), colWidth.via, 8).forEach((text, i) => {
+            draw(text, col.via, top - i * 10, { size: 8 });
+          });
+        }
+
         drawRight(rupiah(line.amount), col.amountRight, top, { bold: true });
         if (line.fee > 0) {
           drawRight(`+ biaya ${rupiah(line.fee)}`, col.amountRight, top - 11, {

@@ -291,9 +291,12 @@
 										{#if isCash}
 											Tunai melalui {line.payeeName || 'penyalur tunai'}
 										{:else}
-											{line.payeeName}
+											{line.members.map((member) => member.name).join(' + ')}
 										{/if}
 									</span>
+									{#if line.viaName}
+										<span class="text-amber-200/80 text-xs">via {line.viaName}</span>
+									{/if}
 									<span class="text-[11px] px-2 py-0.5 rounded-full border {statusClass(line.status)}">
 										{STATUS_LABEL[line.status]}
 									</span>
@@ -379,7 +382,7 @@
 											</div>
 										{/each}
 									</div>
-								{:else if line.members.length > 1 || line.members[0]?.name !== line.payeeName}
+								{:else if line.members.length > 1}
 									<div class="mt-2 text-xs text-white/60 space-y-0.5">
 										{#each line.members as member}
 											<div class="flex justify-between gap-3">
