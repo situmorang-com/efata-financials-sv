@@ -123,15 +123,17 @@ function member(item: BatchItem): PaymentMember {
 	return { itemId: item.id!, name: item.recipient_name || '-', amount: item.amount || 0 };
 }
 
-/** Cash rows grouped the way families are for transfers: same family, same payee. */
+/** Cash rows grouped by family: one hand-over per family group. */
 function buildCashGroups(cash: BatchItem[]): CashGroup[] {
 	const families = new Map<string, BatchItem[]>();
 	const groups: CashGroup[] = [];
 	const single = (item: BatchItem) =>
 		groups.push({ receiverName: item.recipient_name || '-', members: [member(item)], amount: item.amount || 0 });
 
+	// Cash is handed over in person, so the bank account doesn't matter: every
+	// member of one family is one hand-over, whatever accounts they have.
 	for (const item of cash) {
-		const key = familyKey(item);
+		const key = item.family_group_id ? `family:${item.family_group_id}` : null;
 		if (!key) single(item);
 		else families.set(key, [...(families.get(key) || []), item]);
 	}

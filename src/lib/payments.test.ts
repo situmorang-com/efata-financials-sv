@@ -134,6 +134,16 @@ describe('buildPaymentLines', () => {
 			},
 			{ receiverName: 'Dewi', amount: 100000, members: [{ itemId: 340, name: 'Dewi', amount: 100000 }] }
 		]);
+		// Cash ignores bank accounts: a family with two different accounts is one hand-over.
+		const ownAccounts = [
+			row(390, 'Dina', 130000, { payment_method: 'cash', family_group_id: 7, account_number: '111', actual_account_number: '111' }),
+			row(391, 'Joko', 130000, { payment_method: 'cash', family_group_id: 7, account_number: '222', actual_account_number: '222' }),
+			row(392, 'Lia', 150000, { payment_method: 'cash', family_group_id: 7, bank_name: '', account_number: '', actual_bank_name: '', actual_account_number: '' })
+		];
+		const groups = buildPaymentLines(batch, ownAccounts, opts).at(-1)!.cashGroups!;
+		expect(groups).toHaveLength(1);
+		expect(groups[0].members.map((m) => m.name)).toEqual(['Dina', 'Joko', 'Lia']);
+		expect(groups[0].amount).toBe(410000);
 		// One family member in cash, the other by transfer: each stands alone.
 		const mixed = buildPaymentLines(batch, [{ ...ani, payment_method: 'cash' }, budi], opts);
 		expect(mixed.map((l) => l.key)).toEqual(['item:320', 'cash']);
