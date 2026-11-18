@@ -316,7 +316,7 @@ export const GET: RequestHandler = async ({ params, url }) => {
         const hy = y - 11.5;
         const opts = { size: 8, bold: true, color: muted };
         draw("No", col.no, hy, opts);
-        draw("Nama penerima tunai", col.ref, hy, opts);
+        draw("Diserahkan kepada", col.ref, hy, opts);
         drawRight("Jumlah", margin + 360, hy, opts);
         draw("Tanda terima", margin + 380, hy, opts);
         y -= 16;
@@ -367,18 +367,40 @@ export const GET: RequestHandler = async ({ params, url }) => {
       draw("Daftar pembagian tunai", margin, y - 9, { size: 9.5, bold: true });
       y -= 16;
       listHeader();
-      cash.members.forEach((member, index) => {
-        const rowHeight = 20;
+      // One row per hand-over: a family gets its cash together and signs once.
+      const groups = cash.cashGroups ?? [];
+      groups.forEach((group, index) => {
+        const isFamily = group.members.length > 1;
+        const rowHeight = isFamily ? 16 + group.members.length * 11 + 5 : 20;
         ensure(rowHeight, listHeader);
         const top = y - 13;
         draw(String(index + 1), col.no, top, { color: muted });
-        draw(member.name, col.ref, top, { maxWidth: 250 });
-        drawRight(rupiah(member.amount), margin + 360, top, { bold: true });
+        draw(
+          isFamily
+            ? `${withoutPhoneNumbers(group.receiverName)} (${group.members.length} orang)`
+            : group.receiverName,
+          col.ref,
+          top,
+          { bold: isFamily, maxWidth: 250 },
+        );
+        drawRight(rupiah(group.amount), margin + 360, top, { bold: true });
+        if (isFamily) {
+          group.members.forEach((member, i) => {
+            const memberY = top - 12 - i * 11;
+            draw(member.name, col.ref + 10, memberY, { size: 8, color: muted, maxWidth: 200 });
+            drawRight(rupiah(member.amount), margin + 300, memberY, { size: 8, color: muted });
+          });
+        }
         y -= rowHeight;
         hLine(y);
       });
       ensure(22);
-      draw(`Total tunai (${cash.members.length} orang)`, col.ref, y - 14, { bold: true });
+      draw(
+        `Total tunai (${cash.members.length} orang, ${groups.length} penyerahan)`,
+        col.ref,
+        y - 14,
+        { bold: true },
+      );
       drawRight(rupiah(cash.amount), margin + 360, y - 14, { bold: true });
       y -= 30;
     }

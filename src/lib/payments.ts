@@ -23,6 +23,12 @@ export type CashDistributor = { name: string; bank_name: string; account_number:
 
 export type PaymentMember = { itemId: number; name: string; amount: number };
 
+/**
+ * Who the distributor hands cash to: a family paid together gets its cash in
+ * one hand-over to the family's payee; anyone else gets their own.
+ */
+export type CashGroup = { receiverName: string; members: PaymentMember[]; amount: number };
+
 export type PaymentLine = {
 	/** "item:<lead row id>" or "cash". */
 	key: string;
@@ -36,6 +42,8 @@ export type PaymentLine = {
 	/** What to type in the bank portal: a Dana number becomes the source bank's virtual account. */
 	payAccountNumber: string;
 	members: PaymentMember[];
+	/** Cash line only: the members grouped by hand-over (see CashGroup). */
+	cashGroups?: CashGroup[];
 	amount: number;
 	fee: number;
 	reference: string;
@@ -57,10 +65,10 @@ function lower(value?: string | null): string {
 
 /**
  * Members of one family whose money goes to the same account share a key.
- * Cash rows and rows outside a family group have none.
+ * Rows outside a family group have none.
  */
-export function familyTransferKey(item: BatchItem): string | null {
-	if (!item.family_group_id || isCashItem(item)) return null;
+function familyKey(item: BatchItem): string | null {
+	if (!item.family_group_id) return null;
 	const accountNumber = digits(item.actual_account_number || item.account_number);
 	const bank = lower(item.actual_bank_name || item.bank_name);
 	const destination = accountNumber
@@ -69,6 +77,11 @@ export function familyTransferKey(item: BatchItem): string | null {
 			? `to:${item.transfer_to_id}`
 			: `self:${item.recipient_id}`;
 	return `family:${item.family_group_id}:${destination}`;
+}
+
+/** The family key of a row paid by bank transfer; cash rows have none. */
+export function familyTransferKey(item: BatchItem): string | null {
+	return isCashItem(item) ? null : familyKey(item);
 }
 
 export function sortFamilyMembers(members: BatchItem[]): BatchItem[] {
@@ -98,6 +111,38 @@ function transferStatus(members: BatchItem[]): PaymentStatus {
 	return 'todo';
 }
 
+function member(item: BatchItem): PaymentMember {
+	return { itemId: item.id!, name: item.recipient_name || '-', amount: item.amount || 0 };
+}
+
+/** Cash rows grouped the way families are for transfers: same family, same payee. */
+function buildCashGroups(cash: BatchItem[]): CashGroup[] {
+	const families = new Map<string, BatchItem[]>();
+	const groups: CashGroup[] = [];
+	const single = (item: BatchItem) =>
+		groups.push({ receiverName: item.recipient_name || '-', members: [member(item)], amount: item.amount || 0 });
+
+	for (const item of cash) {
+		const key = familyKey(item);
+		if (!key) single(item);
+		else families.set(key, [...(families.get(key) || []), item]);
+	}
+	for (const members of families.values()) {
+		if (members.length < 2) {
+			single(members[0]);
+			continue;
+		}
+		const sorted = sortFamilyMembers(members);
+		const lead = familyLead(sorted);
+		groups.push({
+			receiverName: lead.transfer_to_name || lead.actual_account_holder || lead.recipient_name || '-',
+			members: sorted.map(member),
+			amount: sorted.reduce((sum, m) => sum + (m.amount || 0), 0)
+		});
+	}
+	return groups.sort((a, b) => a.receiverName.localeCompare(b.receiverName));
+}
+
 function transferLine(batch: Batch, lead: BatchItem, paid: BatchItem[], sourceBank: SourceBank): PaymentLine {
 	const bankName = lead.actual_bank_name || lead.bank_name || '';
 	const accountNumber = lead.actual_account_number || lead.account_number || '';
@@ -109,7 +154,7 @@ function transferLine(batch: Batch, lead: BatchItem, paid: BatchItem[], sourceBa
 		bankName,
 		accountNumber,
 		payAccountNumber: payAccountNumber(bankName, accountNumber, sourceBank),
-		members: paid.map((m) => ({ itemId: m.id!, name: m.recipient_name || '-', amount: m.amount || 0 })),
+		members: paid.map(member),
 		amount: paid.reduce((sum, m) => sum + (m.amount || 0), 0),
 		fee: paid.reduce((sum, m) => sum + (m.transfer_fee || 0), 0),
 		reference: buildTransferReference(batch, lead.id!),
@@ -164,7 +209,8 @@ export function buildPaymentLines(
 			bankName,
 			accountNumber: cashDistributor?.account_number || '',
 			payAccountNumber: digits(cashDistributor?.account_number),
-			members: cash.map((m) => ({ itemId: m.id!, name: m.recipient_name || '-', amount: m.amount || 0 })),
+			members: cash.map(member),
+			cashGroups: buildCashGroups(cash),
 			amount: cash.reduce((sum, m) => sum + (m.amount || 0), 0),
 			fee: cashDistributor ? getTransferFee(sourceBank, bankName) : 0,
 			reference: buildCashReference(batch),

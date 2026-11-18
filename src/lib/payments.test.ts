@@ -93,6 +93,30 @@ describe('buildPaymentLines', () => {
 		expect(sumPaymentLines(lines)).toEqual({ count: 2, amount: 300000, fee: 5000 });
 	});
 
+	it('groups cash by family, one hand-over per family', () => {
+		const cashFamily = [ani, budi].map((item) => ({ ...item, payment_method: 'cash' as const }));
+		const lines = buildPaymentLines(batch, [...cashFamily, dewi, citra], opts);
+		const cash = lines.at(-1)!;
+		expect(cash.amount).toBe(360000);
+		expect(cash.members).toHaveLength(3);
+		expect(cash.remark).toBe('EFATA Oktober 2026 - Tunai untuk 3 orang');
+		expect(cash.cashGroups).toEqual([
+			{
+				receiverName: 'Budi',
+				amount: 260000,
+				members: [
+					{ itemId: 310, name: 'Ani', amount: 130000 },
+					{ itemId: 320, name: 'Budi', amount: 130000 }
+				]
+			},
+			{ receiverName: 'Dewi', amount: 100000, members: [{ itemId: 340, name: 'Dewi', amount: 100000 }] }
+		]);
+		// One family member in cash, the other by transfer: each stands alone.
+		const mixed = buildPaymentLines(batch, [{ ...ani, payment_method: 'cash' }, budi], opts);
+		expect(mixed.map((l) => l.key)).toEqual(['item:320', 'cash']);
+		expect(mixed[1].cashGroups?.map((g) => g.receiverName)).toEqual(['Ani']);
+	});
+
 	it('reports status per transfer', () => {
 		const at = '2026-10-30T00:00:00Z';
 		const status = (items: BatchItem[], b: Batch = batch) =>

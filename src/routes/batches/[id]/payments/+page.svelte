@@ -354,8 +354,33 @@
 									</form>
 								{/if}
 
-								{#if line.members.length > 1 || isCash || line.members[0]?.name !== line.payeeName}
-									<div class="mt-2 text-xs text-white/60 {isCash ? 'grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-0.5' : 'space-y-0.5'}">
+								{#if isCash}
+									<!-- Cash is handed over per family: one entry per hand-over. -->
+									<div class="mt-2 text-xs text-white/60 grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-1.5">
+										{#each line.cashGroups ?? [] as group}
+											<div>
+												<div class="flex justify-between gap-3 text-white/80">
+													<span class="truncate">
+														{group.receiverName}
+														{#if group.members.length > 1}
+															<span class="text-white/40">· {group.members.length} orang</span>
+														{/if}
+													</span>
+													<span class="font-mono shrink-0">{formatRupiah(group.amount)}</span>
+												</div>
+												{#if group.members.length > 1}
+													{#each group.members as member}
+														<div class="flex justify-between gap-3 pl-3 text-white/50">
+															<span class="truncate">{member.name}</span>
+															<span class="font-mono shrink-0">{formatRupiah(member.amount)}</span>
+														</div>
+													{/each}
+												{/if}
+											</div>
+										{/each}
+									</div>
+								{:else if line.members.length > 1 || line.members[0]?.name !== line.payeeName}
+									<div class="mt-2 text-xs text-white/60 space-y-0.5">
 										{#each line.members as member}
 											<div class="flex justify-between gap-3">
 												<span class="truncate">{member.name}</span>
