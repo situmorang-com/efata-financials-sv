@@ -6,6 +6,8 @@
 	import Loader2 from '@lucide/svelte/icons/loader-2';
 	import Image from '@lucide/svelte/icons/image';
 	import Undo2 from '@lucide/svelte/icons/undo-2';
+	import CheckCheck from '@lucide/svelte/icons/check-check';
+	import { isPdfFile, pdfToImage } from '$lib/pdf-to-image.js';
 
 	let {
 		itemId,
@@ -33,6 +35,7 @@
 	let modalEl: HTMLDivElement;
 	let fileInput = $state<HTMLInputElement | undefined>(undefined);
 	let uploadProgress = $state('');
+	let uploadError = $state('');
 
 	// Portal: move modal to document.body so it escapes overflow/transform ancestors
 	$effect(() => {
@@ -80,10 +83,13 @@
 		if (!file) return;
 
 		mode = 'uploading';
-		uploadProgress = 'Mengompresi...';
+		uploadError = '';
+		const isPdf = isPdfFile(file);
+		uploadProgress = isPdf ? 'Mengubah PDF...' : 'Mengompresi...';
 
 		try {
-			const blob = await prepareImage(file);
+			// A PDF receipt becomes one trimmed image; photos are shrunk as before.
+			const blob = isPdf ? await pdfToImage(file) : await prepareImage(file);
 			const sizeKB = Math.round(blob.size / 1024);
 			uploadProgress = `Mengunggah (${sizeKB}KB)...`;
 
@@ -100,6 +106,7 @@
 			onStatusChange('done', true);
 		} catch (err) {
 			console.error('Failed to upload proof:', err);
+			uploadError = isPdf ? 'PDF tidak bisa dibaca' : 'Gagal mengunggah';
 			mode = 'picking';
 			uploadProgress = '';
 		}
@@ -192,6 +199,46 @@
 			{#if !compact}Transfer{/if}
 		</button>
 
+	{:else if mode === 'picking' && compact}
+		<!-- Picking in a narrow table cell: icon buttons stacked, so nothing spills out. -->
+		<div class="flex flex-col items-center gap-1">
+			<label
+				class="flex items-center justify-center rounded-lg p-1.5 cursor-pointer transition-all
+					bg-emerald-500/15 text-emerald-300 border border-emerald-500/25 hover:bg-emerald-500/25"
+				title="Upload bukti (foto, gambar atau PDF)"
+			>
+				<Camera class="w-3.5 h-3.5" />
+				<input
+					bind:this={fileInput}
+					type="file"
+					accept="image/*,application/pdf,.pdf"
+					disabled={disabled}
+					onchange={handleFileSelected}
+					class="hidden"
+				/>
+			</label>
+			<button
+				type="button"
+				disabled={disabled}
+				onclick={markDoneWithoutProof}
+				class="rounded-lg p-1.5 text-white/40 border border-white/10 hover:text-white/70 hover:border-white/25 transition-all {disabled ? 'opacity-50 cursor-not-allowed' : ''}"
+				title="Tandai selesai tanpa bukti"
+			>
+				<CheckCheck class="w-3.5 h-3.5" />
+			</button>
+			<button
+				type="button"
+				onclick={closePicker}
+				class="rounded-lg p-1 text-white/30 hover:text-white/60 hover:bg-white/5 transition-all"
+				title="Batal"
+			>
+				<X class="w-3 h-3" />
+			</button>
+			{#if uploadError}
+				<span class="text-rose-300 text-[10px] leading-tight text-center">{uploadError}</span>
+			{/if}
+		</div>
+
 	{:else if mode === 'picking'}
 		<!-- Picking: Show upload options -->
 		<div class="flex flex-col gap-1.5 w-full min-w-[180px]">
@@ -205,8 +252,7 @@
 					<input
 						bind:this={fileInput}
 						type="file"
-						accept="image/*"
-						capture="environment"
+						accept="image/*,application/pdf,.pdf"
 						disabled={disabled}
 						onchange={handleFileSelected}
 						class="hidden"
@@ -220,6 +266,9 @@
 					<X class="w-3.5 h-3.5" />
 				</button>
 			</div>
+			{#if uploadError}
+				<span class="text-rose-300 text-[11px]">{uploadError}</span>
+			{/if}
 			<button
 				type="button"
 				disabled={disabled}
@@ -231,10 +280,13 @@
 		</div>
 
 	{:else if mode === 'uploading'}
-		<!-- Uploading: Show progress -->
-		<div class="flex items-center gap-2 rounded-lg px-3 py-1.5 text-xs text-white/50 bg-white/5 border border-white/10">
+		<!-- Uploading: Show progress (spinner only in a narrow table cell) -->
+		<div
+			class="flex items-center gap-2 rounded-lg text-xs text-white/50 bg-white/5 border border-white/10 {compact ? 'p-1.5' : 'px-3 py-1.5'}"
+			title={uploadProgress}
+		>
 			<Loader2 class="w-3.5 h-3.5 animate-spin" />
-			{uploadProgress}
+			{#if !compact}{uploadProgress}{/if}
 		</div>
 
 	{:else if transferStatus === 'done' && (mode === 'idle' || mode === 'viewing')}

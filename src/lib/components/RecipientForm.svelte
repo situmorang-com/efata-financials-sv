@@ -38,6 +38,8 @@
 
 	let formData = $state(createFormData());
 
+	const RELATIONS = ['Suami', 'Istri', 'Anak', 'Orang tua', 'Saudara', 'Menantu', 'Cucu', 'Kerabat', 'Teman'];
+
 	// Get unique family groups from recipients
 	let familyGroups = $derived(() => {
 		const groups = new Map<number, string[]>();
@@ -275,17 +277,26 @@
 				<input
 					id="recipient-holder-relation"
 					type="text"
-					list="recipient-holder-relations"
 					bind:value={formData.account_holder_relation}
 					maxlength="80"
 					class="w-full glass-input rounded-xl px-4 py-2.5 text-white text-sm placeholder-white/30 focus:outline-none focus:ring-2 focus:ring-emerald-500/30"
 					placeholder="mis. anak, suami, saudara"
 				/>
-				<datalist id="recipient-holder-relations">
-					{#each ['Suami', 'Istri', 'Anak', 'Orang tua', 'Saudara', 'Menantu', 'Cucu', 'Kerabat', 'Teman'] as relation}
-						<option value={relation}></option>
+				<!-- Quick picks right under the field (a native datalist popup can open far from it). -->
+				<div class="flex flex-wrap gap-1 mt-1.5">
+					{#each RELATIONS as relation}
+						<button
+							type="button"
+							onclick={() => { formData.account_holder_relation = relation; }}
+							class="text-[11px] px-2 py-0.5 rounded-full border transition-colors
+								{formData.account_holder_relation.trim().toLowerCase() === relation.toLowerCase()
+									? 'border-emerald-400/50 bg-emerald-500/20 text-emerald-100'
+									: 'border-white/15 bg-white/5 text-white/60 hover:text-white hover:border-white/30'}"
+						>
+							{relation}
+						</button>
 					{/each}
-				</datalist>
+				</div>
 				<p class="text-white/40 text-xs mt-1">Pemilik rekening ini siapanya penerima.</p>
 			</div>
 		{/if}

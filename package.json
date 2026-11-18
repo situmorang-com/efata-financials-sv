@@ -47,6 +47,7 @@
     "better-sqlite3": "^12.6.2",
     "clsx": "^2.1.1",
     "pdf-lib": "^1.17.1",
+    "pdfjs-dist": "4.10.38",
     "sharp": "^0.34.5",
     "tailwind-merge": "^3.3.1"
   }
