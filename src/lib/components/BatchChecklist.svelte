@@ -1176,7 +1176,9 @@
 										{/if}
 									</td>
 									<td class="px-3 py-2.5">
-										{#if item.transfer_to_id}
+										{#if isCash(item)}
+											<span class="text-white/30 text-xs">Tunai</span>
+										{:else if item.transfer_to_id}
 											<div class="text-white/70 text-xs">
 												<span class="text-amber-200/60">&#8594;</span>
 												{item.actual_bank_name}
@@ -1407,7 +1409,9 @@
 									<p class="text-amber-200/70 text-xs mt-0.5 ml-5">via {item.transfer_to_name}</p>
 								{/if}
 								<div class="mt-1 ml-5">
-									{#if item.transfer_to_id}
+									{#if isCash(item)}
+										<p class="text-white/30 text-xs">Tunai</p>
+									{:else if item.transfer_to_id}
 										<p class="text-white/50 text-xs">
 											<span class="text-amber-200/60">&#8594;</span>
 											{item.actual_bank_name}
