@@ -183,7 +183,7 @@ function seed() {
       name: "BCA Operasional EFATA",
       type: "bank",
       bankName: "BCA",
-      accountNumber: "1234567890",
+      accountNumber: "1234567890", // sensitive-ok: fake
       holderName: "GK EFATA",
       openingBalance: 15_000_000,
     }),
@@ -191,7 +191,7 @@ function seed() {
       name: "Mandiri Misi EFATA",
       type: "bank",
       bankName: "Mandiri",
-      accountNumber: "9876543210",
+      accountNumber: "9876543210", // sensitive-ok: fake
       holderName: "GK EFATA",
       openingBalance: 8_000_000,
     }),

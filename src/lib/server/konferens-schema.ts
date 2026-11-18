@@ -149,11 +149,13 @@ export const JEMAAT_ACCOUNT_SEED: Array<{ code: string; name: string }> = [
 ];
 
 /** Minimal shape shared by better-sqlite3 and node:sqlite handles. */
+// Method syntax on purpose: method parameters are checked bivariantly, so
+// better-sqlite3's typed Statement (whose run() takes specific params) fits.
 type SqliteLike = {
-  exec: (sql: string) => unknown;
-  prepare: (sql: string) => {
-    run: (...params: unknown[]) => unknown;
-    all: (...params: unknown[]) => unknown[];
+  exec(sql: string): unknown;
+  prepare(sql: string): {
+    run(...params: unknown[]): unknown;
+    all(...params: unknown[]): unknown[];
   };
 };
 

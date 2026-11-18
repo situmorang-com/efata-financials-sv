@@ -5,12 +5,16 @@
   "type": "module",
   "scripts": {
     "dev": "vite dev",
+    "dev:copy": "node scripts/dev-copy.mjs",
+    "dev:session": "node scripts/dev-session.mjs",
     "build": "vite build",
     "preview": "vite preview",
-    "prepare": "svelte-kit sync || echo ''",
+    "prepare": "svelte-kit sync || echo ''; git config core.hooksPath .githooks 2>/dev/null || true",
     "postinstall": "node scripts/postinstall.js",
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
+    "check:sensitive": "node scripts/check-sensitive.mjs --all",
     "check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
+    "test": "vitest run",
     "seed:finance-dummy": "node scripts/seed-finance-dummy.mjs",
     "generate-secret": "node scripts/generate-secret.js",
     "repair:reconciliation-accounts": "node scripts/repair-reconciliation-accounts.mjs",
@@ -33,7 +37,8 @@
     "tailwind-variants": "^1.0.0",
     "tailwindcss": "^4.1.12",
     "typescript": "^5.0.0",
-    "vite": "^7.0.4"
+    "vite": "^7.0.4",
+    "vitest": "3.2.7"
   },
   "dependencies": {
     "@auth/core": "^0.35.0",

@@ -37,3 +37,6 @@ scripts/merge-*.mjs
 
 # Local Claude Code config and worktrees
 /.claude/
+
+# Throwaway database copy for local testing (npm run dev:copy)
+/.data-copy/

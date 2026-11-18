@@ -17,7 +17,7 @@ import {
   todayJakarta,
 } from "$lib/membership";
 import { DEFAULT_SOURCE_BANK, getTransferFee } from "$lib/transfer-fee";
-import { join } from "path";
+import { join, resolve } from "path";
 import type {
   Recipient,
   RecipientPeriod,
@@ -63,7 +63,11 @@ import type {
 } from "./konferens-allocation.js";
 
 // Proof image file storage
-const DATA_DIR = join(process.cwd(), "data");
+// DATA_DIR points the app (or a test) at another copy of the data, e.g.
+// DATA_DIR=/tmp/efata-copy npm run dev. Production leaves it unset (/app/data).
+const DATA_DIR = process.env.DATA_DIR
+  ? resolve(process.env.DATA_DIR)
+  : join(process.cwd(), "data");
 if (!existsSync(DATA_DIR)) {
   mkdirSync(DATA_DIR, { recursive: true });
 }
