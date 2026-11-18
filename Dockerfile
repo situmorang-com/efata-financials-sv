@@ -44,7 +44,10 @@ EXPOSE 3000
 # Set environment variables
 ENV NODE_ENV=production
 ENV PORT=3000
-ENV HOST=0.0.0.0
+# "::" listens on IPv6 and IPv4. Coolify's health check runs
+# `wget http://localhost:3000/health` in the container, and busybox wget
+# resolves localhost to ::1 first, so an IPv4-only 0.0.0.0 fails it.
+ENV HOST=::
 
 # Auth environment variables will be set at runtime via Coolify
 # AUTH_SECRET
