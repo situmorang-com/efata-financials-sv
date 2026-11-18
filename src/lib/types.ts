@@ -53,6 +53,9 @@ export interface Batch {
   status: "active" | "completed";
   /** Month the batch pays for, YYYY-MM. */
   period?: string | null;
+  /** The one transfer that carries all cash to the cash distributor: entered in the bank portal / sent. */
+  cash_payout_submitted_at?: string | null;
+  cash_payout_done_at?: string | null;
   created_at: string;
   updated_at: string;
   total_items?: number;
@@ -73,6 +76,8 @@ export interface BatchItem {
   transfer_status: "pending" | "done";
   notify_status: "pending" | "sent" | "skipped";
   transfer_at?: string;
+  /** When this row's transfer was entered in the bank portal (Kopra) and is awaiting approval. */
+  kopra_submitted_at?: string | null;
   notified_at?: string;
   transfer_proof?: string | null; // base64 data URL or stored filename (only fetched on-demand via proof endpoint)
   has_transfer_proof?: number; // 0 or 1 flag (included in list queries)

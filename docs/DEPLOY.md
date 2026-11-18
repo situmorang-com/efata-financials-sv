@@ -60,6 +60,10 @@ run `scripts/check-sensitive.mjs`. On 18 Nov 2026 the history was rewritten with
 accounts, WhatsApp numbers), `recipients.xlsx` and `efata.db-shm`/`-wal`; clones
 made before that still carry them, so re-clone instead of pulling.
 
+The same goes for the cash distributor (the person who receives a batch's cash in
+one transfer and hands it out): their name and bank account are typed in on a
+batch's **Pembayaran** page and stored in the `app_settings` table, not in code.
+
 ## Rollback
 
 `coolify.sh rollback msgw0cg0skkggo0cscg44kw8` redeploys the previous image.

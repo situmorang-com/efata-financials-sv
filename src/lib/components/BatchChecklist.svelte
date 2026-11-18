@@ -22,7 +22,8 @@
 	import Bell from '@lucide/svelte/icons/bell';
 	import Banknote from '@lucide/svelte/icons/banknote';
 	import { DEFAULT_SOURCE_BANK, getTransferFee } from '$lib/transfer-fee.js';
-	import { buildTransferReference, buildTransferRemark } from '$lib/transfer-reference.js';
+	import { buildPaymentLines, familyLead, familyTransferKey, sortFamilyMembers, type PaymentLine } from '$lib/payments.js';
+	import Wallet from '@lucide/svelte/icons/wallet';
 	import { searchShortcut, searchShortcutLabel } from '$lib/actions/search-shortcut.js';
 	import CircleDollarSign from '@lucide/svelte/icons/circle-dollar-sign';
 	import CalendarDays from '@lucide/svelte/icons/calendar-days';
@@ -241,31 +242,18 @@
 		}
 	}
 
-	// Kopra "Transaction Reference" and "Remark" for a transfer row. A family
-	// transfer is one bank transfer, so every member shares the lead row's values.
+	// Kopra "Transaction Reference" and "Remark" for a transfer row, taken from
+	// the payment line that pays it (same values as the Pembayaran page and PDF).
+	// A family transfer is one bank transfer, so its members share one line.
 	function getKopraFields(item: BatchItem): { reference: string; remark: string } | null {
-		if (!batch || !item.id || isCash(item)) return null;
+		if (!item.id || isCash(item)) return null;
 		if (!item.transfer_to_id && !item.bank_name) return null;
-		const group = familyGroupByItemId.get(item.id);
-		const names = group
-			? group.members.map((member) => member.recipient_name || '')
-			: [item.recipient_name || ''];
-		return {
-			reference: buildTransferReference(batch, group ? group.leadItemId : item.id),
-			remark: buildTransferRemark(batch.name, names)
-		};
+		const line = paymentLineByItemId.get(item.id);
+		return line ? { reference: line.reference, remark: line.remark } : null;
 	}
 
 	function getFamilyTransferKey(item: BatchItem): string | null {
-		if (!item.family_group_id || isCash(item)) return null;
-		const accountNumber = normalizeAccountNumber(item.actual_account_number || item.account_number);
-		const bank = normalizeKeyPart(item.actual_bank_name || item.bank_name);
-		const destination = accountNumber
-			? `acct:${bank}:${accountNumber}`
-			: item.transfer_to_id
-				? `to:${item.transfer_to_id}`
-				: `self:${item.recipient_id}`;
-		return `family:${item.family_group_id}:${destination}`;
+		return familyTransferKey(item);
 	}
 
 	function buildFamilyTransferGroups(source: BatchItem[]): FamilyTransferGroup[] {
@@ -280,11 +268,8 @@
 		const groups: FamilyTransferGroup[] = [];
 		for (const [key, members] of grouped.entries()) {
 			if (members.length < 2) continue;
-			const sortedMembers = [...members].sort((a, b) =>
-				(a.recipient_name || '').localeCompare(b.recipient_name || '')
-			);
-			const leadMember =
-				sortedMembers.find((member) => member.transfer_to_id) || sortedMembers[0];
+			const sortedMembers = sortFamilyMembers(members);
+			const leadMember = familyLead(sortedMembers);
 			const payeeName =
 				leadMember.transfer_to_name || leadMember.actual_account_holder || leadMember.recipient_name || '-';
 			const bankLabel = leadMember.actual_bank_name || leadMember.bank_name || '-';
@@ -329,6 +314,17 @@
 		})
 	);
 	let familyTransferGroups = $derived(buildFamilyTransferGroups(items));
+	let paymentLineByItemId = $derived(
+		(() => {
+			const map = new Map<number, PaymentLine>();
+			if (!batch) return map;
+			for (const line of buildPaymentLines(batch, items, { sourceBank: selectedSourceBank })) {
+				if (line.kind !== 'transfer') continue;
+				for (const id of line.itemIds) map.set(id, line);
+			}
+			return map;
+		})()
+	);
 	let familyGroupByItemId = $derived(
 		(() => {
 			const map = new Map<number, FamilyTransferGroup>();
@@ -968,6 +964,13 @@
 					>
 						<CalendarDays class="w-4 h-4" />
 						Attendance
+					</a>
+					<a
+						href={`/batches/${batchId}/payments`}
+						class="glass-button rounded-full px-3 py-2 text-white text-sm border border-amber-400/30 bg-amber-500/15 hover:bg-amber-500/30 flex items-center gap-1.5"
+					>
+						<Wallet class="w-4 h-4" />
+						Pembayaran
 					</a>
 					{#if items.length === 0 || isEditMode}
 						<button

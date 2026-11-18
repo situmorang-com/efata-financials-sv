@@ -44,18 +44,39 @@ function clean(text: string): string {
  * "Maria (62…)". A remark is shown to the bank and the recipient, so drop any
  * long digit run (and the brackets left empty).
  */
-function withoutPhoneNumbers(name: string): string {
+export function withoutPhoneNumbers(name: string): string {
 	return name
 		.replace(/\+?\d[\d\s-]{5,}\d/g, '')
 		.replace(/\(\s*\)/g, '')
 		.trim();
 }
 
-/** "EFATA November 2026 - Budi Santoso"; a family transfer lists every member. */
+/**
+ * "EFATA November 2026 - Budi Santoso". A family transfer says how many people
+ * it pays and separates them with " / ", because names can contain dots and
+ * commas: "EFATA November 2026 (2 orang) - Budi Santoso / Sari W.".
+ */
 export function buildTransferRemark(batchName: string | null | undefined, recipientNames: string[]): string {
 	const label = batchRemarkLabel(batchName);
 	const prefix = /efata/i.test(label) ? label : `EFATA ${label}`;
-	const names = recipientNames.map(withoutPhoneNumbers).filter(Boolean).join(', ');
-	const text = clean(names ? `${prefix} - ${names}` : prefix);
+	const people = recipientNames.map(withoutPhoneNumbers).filter(Boolean);
+	const count = people.length > 1 ? ` (${people.length} orang)` : '';
+	const names = people.join(' / ');
+	const text = clean(names ? `${prefix}${count} - ${names}` : prefix);
 	return text.slice(0, REMARK_MAX).trim();
+}
+
+/**
+ * Cash is sent as one transfer to the person who hands it out, so it gets one
+ * reference per batch: EF + YYMM + B<batch id> + "C", e.g. "EF2611B12C".
+ */
+export function buildCashReference(batch: BatchLike): string {
+	return `EF${periodCode(batch)}B${batch.id ?? 0}C`.slice(0, REFERENCE_MAX);
+}
+
+/** "EFATA November 2026 - Tunai untuk 5 orang". */
+export function buildCashRemark(batchName: string | null | undefined, peopleCount: number): string {
+	const label = batchRemarkLabel(batchName);
+	const prefix = /efata/i.test(label) ? label : `EFATA ${label}`;
+	return clean(`${prefix} - Tunai untuk ${peopleCount} orang`).slice(0, REMARK_MAX).trim();
 }

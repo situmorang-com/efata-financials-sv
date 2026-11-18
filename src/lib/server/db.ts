@@ -873,6 +873,27 @@ if (!columnExists("batch_items", "transfer_fee")) {
     "ALTER TABLE batch_items ADD COLUMN transfer_fee INTEGER NOT NULL DEFAULT 0",
   );
 }
+// Payments page: when a row's transfer was entered in the bank portal (Kopra)
+// and is waiting for approval; and, per batch, the one transfer that carries
+// all cash to the cash distributor.
+if (!columnExists("batch_items", "kopra_submitted_at")) {
+  db.exec("ALTER TABLE batch_items ADD COLUMN kopra_submitted_at TEXT");
+}
+if (!columnExists("batches", "cash_payout_submitted_at")) {
+  db.exec("ALTER TABLE batches ADD COLUMN cash_payout_submitted_at TEXT");
+}
+if (!columnExists("batches", "cash_payout_done_at")) {
+  db.exec("ALTER TABLE batches ADD COLUMN cash_payout_done_at TEXT");
+}
+// Small key/value settings kept in the database because they must not be in
+// the (public) code, e.g. the cash distributor's bank account.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS app_settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  )
+`);
 if (!columnExists("batch_items", "payment_method")) {
   db.exec(
     "ALTER TABLE batch_items ADD COLUMN payment_method TEXT NOT NULL DEFAULT 'transfer'",
@@ -1045,7 +1066,7 @@ const selectBatchItems = db.prepare(`
   SELECT
     bi.id, bi.batch_id, bi.recipient_id, bi.amount, bi.payment_method, bi.saturdays_attended, bi.wednesdays_attended,
     bi.zoom_type, bi.custom_zoom_amount, bi.transfer_fee, bi.transfer_status, bi.notify_status, bi.transfer_at,
-    bi.notified_at, bi.notes, bi.created_at, bi.updated_at,
+    bi.notified_at, bi.kopra_submitted_at, bi.notes, bi.created_at, bi.updated_at,
     (bi.transfer_proof IS NOT NULL AND bi.transfer_proof != '') AS has_transfer_proof,
     r.name AS recipient_name,
     r.bank_name,
@@ -5162,5 +5183,71 @@ export async function restoreDatabase(source: string): Promise<string> {
     incoming.close();
   }
 }
+
+/** Key/value settings that must stay out of the code (see app_settings). */
+export const settingsDb = {
+  get: (key: string): string | null => {
+    const row = db
+      .prepare("SELECT value FROM app_settings WHERE key = ?")
+      .get(key) as { value: string } | undefined;
+    return row ? row.value : null;
+  },
+  set: (key: string, value: string): void => {
+    db.prepare(
+      `INSERT INTO app_settings (key, value, updated_at) VALUES (?, ?, ?)
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
+    ).run(key, value, new Date().toISOString());
+  },
+  delete: (key: string): void => {
+    db.prepare("DELETE FROM app_settings WHERE key = ?").run(key);
+  },
+};
+
+/** Status of a batch's payments in the bank portal (see $lib/payments). */
+export const paymentDb = {
+  /** Mark rows as entered in the bank portal (or clear the mark). Returns rows changed. */
+  setSubmitted: (
+    batchId: number,
+    itemIds: number[],
+    submitted: boolean,
+  ): number => {
+    const now = new Date().toISOString();
+    const stmt = db.prepare(
+      "UPDATE batch_items SET kopra_submitted_at = ?, updated_at = ? WHERE id = ? AND batch_id = ?",
+    );
+    let count = 0;
+    db.transaction(() => {
+      for (const id of itemIds) {
+        count += stmt.run(submitted ? now : null, now, id, batchId).changes;
+      }
+    })();
+    return count;
+  },
+
+  /** The transfer that carries the batch's cash to the cash distributor. */
+  setCashPayout: (
+    batchId: number,
+    state: { submitted?: boolean; done?: boolean },
+  ): boolean => {
+    const now = new Date().toISOString();
+    const sets: string[] = [];
+    const values: (string | null)[] = [];
+    if (state.submitted !== undefined) {
+      sets.push("cash_payout_submitted_at = ?");
+      values.push(state.submitted ? now : null);
+    }
+    if (state.done !== undefined) {
+      sets.push("cash_payout_done_at = ?");
+      values.push(state.done ? now : null);
+    }
+    if (sets.length === 0) return false;
+    const result = db
+      .prepare(
+        `UPDATE batches SET ${sets.join(", ")}, updated_at = ? WHERE id = ?`,
+      )
+      .run(...values, now, batchId);
+    return result.changes > 0;
+  },
+};
 
 export const giverStatementDb = createGiverStatementDb(db, env.AUTH_SECRET?.trim() || "");

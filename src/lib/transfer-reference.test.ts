@@ -32,12 +32,14 @@ describe('buildTransferRemark', () => {
 	});
 
 	it('does not repeat EFATA and lists family members', () => {
-		expect(buildTransferRemark('EFATA Natal 2026', ['A Satu', 'B Dua'])).toBe('EFATA Natal 2026 - A Satu, B Dua');
+		expect(buildTransferRemark('EFATA Natal 2026', ['A Satu L.S', 'B Dua'])).toBe(
+			'EFATA Natal 2026 (2 orang) - A Satu L.S / B Dua'
+		);
 	});
 
 	it('leaves phone numbers in names out of the remark', () => {
 		expect(buildTransferRemark('Transfer Mei', ['Maria (6280000000000)', 'Yosef'])).toBe( // sensitive-ok
-			'EFATA Mei - Maria, Yosef'
+			'EFATA Mei (2 orang) - Maria / Yosef'
 		);
 		expect(buildTransferRemark('Transfer Mei', ['Daniel +62 800-0000-0000'])).toBe('EFATA Mei - Daniel'); // sensitive-ok
 		expect(buildTransferRemark('Transfer Mei', ['Tan Wei Ming (Andi Tan)'])).toBe(
