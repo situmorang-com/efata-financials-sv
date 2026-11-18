@@ -1,7 +1,3 @@
-# Known member data already in the public repo, awaiting cleanup (and a history
-# purge). Format: path:substring-of-the-line (an empty substring allows the whole
-# file). Keep substrings short so this file never repeats the data itself.
-# Remove an entry once its file no longer carries the data.
-src/lib/server/seed.ts:
-PLAN.md:│    BRI 2010
-src/routes/finance/accounts/+page.svelte:placeholder="Contoh: 124
+# Known findings awaiting cleanup. Format: path:substring-of-the-line (an empty
+# substring allows the whole file). Keep substrings short so this file never
+# repeats the data itself. Empty since the Nov 2026 history purge.
