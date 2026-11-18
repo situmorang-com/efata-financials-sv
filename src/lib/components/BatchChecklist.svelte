@@ -22,6 +22,7 @@
 	import Bell from '@lucide/svelte/icons/bell';
 	import Banknote from '@lucide/svelte/icons/banknote';
 	import { DEFAULT_SOURCE_BANK, getTransferFee } from '$lib/transfer-fee.js';
+	import { buildTransferReference, buildTransferRemark } from '$lib/transfer-reference.js';
 	import { searchShortcut, searchShortcutLabel } from '$lib/actions/search-shortcut.js';
 	import CircleDollarSign from '@lucide/svelte/icons/circle-dollar-sign';
 	import CalendarDays from '@lucide/svelte/icons/calendar-days';
@@ -227,6 +228,32 @@
 			console.error('Failed to copy DANA account:', error);
 			addToast('Gagal menyalin nomor DANA', 'error');
 		}
+	}
+
+	async function copyText(value: string | null | undefined, label = '') {
+		if (!value) return;
+		try {
+			await navigator.clipboard.writeText(value);
+			addToast(`Tersalin${label ? ` ${label}` : ''}: ${value}`, 'success');
+		} catch (error) {
+			console.error('Failed to copy:', error);
+			addToast('Gagal menyalin', 'error');
+		}
+	}
+
+	// Kopra "Transaction Reference" and "Remark" for a transfer row. A family
+	// transfer is one bank transfer, so every member shares the lead row's values.
+	function getKopraFields(item: BatchItem): { reference: string; remark: string } | null {
+		if (!batch || !item.id || isCash(item)) return null;
+		if (!item.transfer_to_id && !item.bank_name) return null;
+		const group = familyGroupByItemId.get(item.id);
+		const names = group
+			? group.members.map((member) => member.recipient_name || '')
+			: [item.recipient_name || ''];
+		return {
+			reference: buildTransferReference(batch, group ? group.leadItemId : item.id),
+			remark: buildTransferRemark(batch.name, names)
+		};
 	}
 
 	function getFamilyTransferKey(item: BatchItem): string | null {
@@ -859,6 +886,26 @@
 	});
 </script>
 
+{#snippet kopraFields(item: BatchItem)}
+	{@const fields = getKopraFields(item)}
+	{#if fields}
+		<div class="flex flex-wrap items-center gap-1 mt-1">
+			<button
+				type="button"
+				class="font-mono text-[10px] leading-4 px-1.5 rounded border border-white/10 bg-white/5 text-white/50 hover:text-white/80 hover:border-white/25 cursor-copy"
+				title="Klik untuk copy Transaction Reference (Kopra)"
+				onclick={() => copyText(fields.reference, 'reference')}
+			>Ref {fields.reference}</button>
+			<button
+				type="button"
+				class="text-[10px] leading-4 px-1.5 rounded border border-white/10 bg-white/5 text-white/50 hover:text-white/80 hover:border-white/25 cursor-copy"
+				title={`Klik untuk copy Remark (Kopra): ${fields.remark}`}
+				onclick={() => copyText(fields.remark, 'remark')}
+			>Remark</button>
+		</div>
+	{/if}
+{/snippet}
+
 <div class="p-4 sm:p-6 max-w-7xl mx-auto">
 	{#if loading}
 		<div class="mb-6">
@@ -1183,6 +1230,7 @@
 										{:else}
 											<span class="text-white/30 text-xs">-</span>
 										{/if}
+										{@render kopraFields(item)}
 									</td>
 									{#if !isSpecial}
 										<td class="px-3 py-2.5">
@@ -1411,6 +1459,7 @@
 											{/if}
 										</p>
 									{/if}
+									{@render kopraFields(item)}
 								</div>
 							</div>
 							<div class="text-right flex-shrink-0">
