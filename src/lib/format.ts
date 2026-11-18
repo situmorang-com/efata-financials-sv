@@ -14,6 +14,21 @@ export function cleanPhoneForWhatsApp(phone: string): string {
 	return cleaned;
 }
 
+/**
+ * The zoom line under a person's attendance. Zoom pay is a flat monthly amount,
+ * so it is shown whenever the person gets it, with the Wednesday evenings
+ * attended when those were recorded: "↳ zoom Rp 50.000 (4 rabu malam)".
+ */
+function zoomLine(amount: number, sessions: number): string | null {
+	const pay = Math.max(0, Math.round(Number(amount) || 0));
+	const count = Math.max(0, Math.round(Number(sessions) || 0));
+	if (pay <= 0 && count <= 0) return null;
+	const parts = ['zoom'];
+	if (pay > 0) parts.push(formatRupiah(pay));
+	if (count > 0) parts.push(`(${count} rabu malam)`);
+	return `↳ ${parts.join(' ')}`;
+}
+
 export function generateWhatsAppMessage(
 	name: string,
 	amount: number,
@@ -42,6 +57,8 @@ export function generateWhatsAppMessage(
 			saturdays_attended?: number;
 			zoom_sessions?: number;
 			zoom_label?: string;
+			/** Zoom pay for this member this month (a flat amount, not per session). */
+			zoom_amount?: number;
 		}>;
 	}
 ): string {
@@ -110,16 +127,11 @@ export function generateWhatsAppMessage(
 				if (Number.isFinite(Number(member.saturdays_attended))) {
 					lines.push(`↳ ${Math.max(0, Math.round(Number(member.saturdays_attended) || 0))} sabat`);
 				}
-				if (
-					(member.zoom_sessions && member.zoom_sessions > 0) ||
-					member.zoom_label
-				) {
-					const sessions = Math.max(0, Math.round(Number(member.zoom_sessions) || 0));
-					if (sessions > 0) {
-						lines.push(`↳ ${sessions} rabu malam (${member.zoom_label || 'zoom'})`);
-					} else if (member.zoom_label) {
-						lines.push(`↳ ${member.zoom_label}`);
-					}
+				const zoom = zoomLine(member.zoom_amount ?? 0, member.zoom_sessions ?? 0);
+				if (zoom) {
+					lines.push(zoom);
+				} else if (member.zoom_label) {
+					lines.push(`↳ ${member.zoom_label}`);
 				}
 			}
 		}
@@ -162,19 +174,8 @@ export function generateWhatsAppMessage(
 			lines.push(`↳ ${details.saturdays_attended} sabat`);
 		}
 		if (details.zoom_type !== 'none') {
-			const zoomLabel =
-				details.zoom_type === 'single'
-					? 'zoom'
-					: details.zoom_type === 'family'
-						? 'zoom'
-						: 'zoom';
-			const zoomSessions = Math.max(
-				0,
-				Number(details.wednesdays_attended ?? details.saturdays_attended) || 0
-			);
-			if (zoomSessions > 0) {
-				lines.push(`↳ ${zoomSessions} rabu malam (${zoomLabel})`);
-			}
+			const zoom = zoomLine(details.zoom_amount, details.wednesdays_attended ?? 0);
+			if (zoom) lines.push(zoom);
 		}
 
 		lines.push('');
@@ -231,6 +232,8 @@ export function generateWhatsAppUrl(
 			saturdays_attended?: number;
 			zoom_sessions?: number;
 			zoom_label?: string;
+			/** Zoom pay for this member this month (a flat amount, not per session). */
+			zoom_amount?: number;
 		}>;
 	}
 ): string {

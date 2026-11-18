@@ -30,6 +30,7 @@
 				saturdays_attended?: number;
 				zoom_sessions?: number;
 				zoom_label?: string;
+				zoom_amount?: number;
 			}>;
 		};
 		notifyStatus?: 'pending' | 'sent' | 'skipped';

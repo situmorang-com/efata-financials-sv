@@ -58,3 +58,47 @@ describe('generateWhatsAppMessage: who the account belongs to', () => {
 		expect(msg).toContain('➡️ Rekening tujuan: BCA 1234\n➡️ Melalui: Jo Paulina (Anak)');
 	});
 });
+
+describe('generateWhatsAppMessage: zoom', () => {
+	it('shows flat zoom pay even when no Wednesday was recorded', () => {
+		const msg = generateWhatsAppMessage(
+			'Anita',
+			150000,
+			{ saturdays_attended: 4, wednesdays_attended: 0, transport_rate: 25000, zoom_type: 'single', zoom_amount: 50000 },
+			undefined,
+			{ ...account, transfer_to_name: 'Anita' }
+		);
+		expect(msg).toContain('- Anita\n↳ 4 sabat\n↳ zoom Rp 50.000\n');
+	});
+
+	it('adds the Wednesday evenings when they were recorded', () => {
+		const msg = generateWhatsAppMessage(
+			'Anita',
+			150000,
+			{ saturdays_attended: 4, wednesdays_attended: 3, transport_rate: 25000, zoom_type: 'single', zoom_amount: 50000 },
+			undefined,
+			{ ...account, transfer_to_name: 'Anita' }
+		);
+		expect(msg).toContain('↳ zoom Rp 50.000 (3 rabu malam)');
+	});
+
+	it('shows each family member’s zoom pay', () => {
+		const msg = generateWhatsAppMessage('Ani', 130000, details, undefined, {
+			...account,
+			is_family_transfer: true,
+			transfer_to_name: 'Budi',
+			family_member_names: ['Ani', 'Budi'],
+			family_total_transfer: 260000,
+			family_member_details: [
+				{ name: 'Ani', saturdays_attended: 4, zoom_sessions: 0, zoom_label: 'zoom', zoom_amount: 30000 },
+				{ name: 'Budi', saturdays_attended: 4 }
+			]
+		});
+		expect(msg).toContain('- Ani\n↳ 4 sabat\n↳ zoom Rp 30.000\n- Budi\n↳ 4 sabat\n');
+	});
+
+	it('adds no zoom line for someone without zoom', () => {
+		const msg = generateWhatsAppMessage('Citra', 100000, details, undefined, { ...account, transfer_to_name: 'Citra' });
+		expect(msg).not.toContain('zoom');
+	});
+});

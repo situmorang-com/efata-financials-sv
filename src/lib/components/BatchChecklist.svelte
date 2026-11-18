@@ -364,6 +364,7 @@
 			saturdays_attended?: number;
 			zoom_sessions?: number;
 			zoom_label?: string;
+			zoom_amount?: number;
 		}>;
 	} {
 		const batchLabel = (batch?.name || 'bulan ini').replace(/^transfer\s+/i, '');
@@ -397,7 +398,8 @@
 				zoom_label:
 					member.zoom_type && member.zoom_type !== 'none'
 						? 'zoom'
-						: undefined
+						: undefined,
+				zoom_amount: getZoomAmount(member)
 			}))
 		};
 	}
