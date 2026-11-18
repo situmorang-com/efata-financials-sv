@@ -54,8 +54,11 @@ content in through SQLite's online backup API. Restart the app afterwards
 
 Church financial records and member data are **never committed** (the repo is
 public): bank statements, `reports/`, `recipients.xlsx`, and the data scripts
-that contain names and amounts are in `.gitignore`. `recipients.xlsx` was
-committed before 11 Oct 2026 and is still in git history.
+that contain names and amounts are in `.gitignore`, and a pre-commit hook plus CI
+run `scripts/check-sensitive.mjs`. On 18 Nov 2026 the history was rewritten with
+`git filter-repo` to remove `src/lib/server/seed.ts` (recipients' names, bank
+accounts, WhatsApp numbers), `recipients.xlsx` and `efata.db-shm`/`-wal`; clones
+made before that still carry them, so re-clone instead of pulling.
 
 ## Rollback
 
