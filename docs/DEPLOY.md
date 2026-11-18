@@ -7,9 +7,10 @@ https://coolify.situmorang.com.
 | --- | --- |
 | Coolify app | `msgw0cg0skkggo0cscg44kw8` (Dockerfile build pack, port 3000) |
 | Repo / branch | `situmorang-com/efata-financials-sv` (public) · `main` |
-| Deploy | automatic on push to `main` |
-| Health check | `GET /health` (Coolify runs it with busybox `wget` inside the container) |
+| Deploy | automatic on push to `main`, through the `situmorang-com` GitHub App (Coolify source id 5) |
+| Health check | `GET http://127.0.0.1:3000/health` — host **127.0.0.1, not localhost** (Coolify runs it with busybox `wget` inside the container) |
 | Storage | named volume `…-efata-db-data` (uuid `ait1bu8y4azbtfw15vlfv5e1`) mounted at `/app/data` — the SQLite database, transfer proofs, approval proofs and restore safety copies |
+| Backups | Coolify volume backup of the storage above, daily at `0 19 * * *` (server is UTC, so 02:00 WIB), 7 archives kept on the server |
 | Env keys | `AUTH_SECRET`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `NODE_ENV`, `TZ`, `ORIGIN`, `BODY_SIZE_LIMIT` (values only in Coolify) |
 
 ## Why these settings
@@ -20,6 +21,12 @@ https://coolify.situmorang.com.
 - **`BODY_SIZE_LIMIT=104857600`** — the database upload on `/finance/backup`
   is larger than adapter-node's 512 KB default.
 - **Health check on `/health`** — so a broken image never replaces a working one.
+- **Health check host `127.0.0.1`** — Coolify starts the container with
+  `HOST=0.0.0.0` (IPv4 only, overriding the Dockerfile), and busybox `wget`
+  resolves `localhost` to `::1` first, so a `localhost` check is refused and
+  every deploy is rolled back. Don't change it back to `localhost`.
+- **GitHub App source** — with the plain "Public GitHub" source Coolify never
+  hears about pushes (the repo has no webhook), so "auto deploy" did nothing.
 
 ## Access
 
@@ -36,7 +43,9 @@ Everything requires a Google account on the allowlist in
 
 ## Data
 
-The database lives only on the production volume. To move data in or out use
+The database lives only on the production volume, which Coolify backs up
+nightly (see the table; archives stay on the server, not off-site). To move
+data in or out use
 **Finance → Backup & Restore** (`/finance/backup`): download takes a consistent
 snapshot; restore integrity-checks the upload, writes
 `efata.db.bak-<time>-before-restore` next to the live file, then swaps the
