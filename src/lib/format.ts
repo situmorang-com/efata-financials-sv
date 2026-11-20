@@ -278,10 +278,10 @@ export function generateCashPayoutMessage(payout: {
 	const lines = [
 		`Halo ${payout.distributorName},`,
 		'',
-		`✅ Transfer dana tunai bantuan Tuli EFATA ${payout.batchLabel || 'bulan ini'} sudah dilakukan.`
+		`💸 Transfer dana tunai bantuan Tuli EFATA ${payout.batchLabel || 'bulan ini'} sudah dilakukan.`
 	];
-	if (account) lines.push(`➡️ Rekening tujuan: ${account}`);
-	lines.push(`✅ Total transfer: ${formatRupiah(payout.amount)}`);
+	if (account) lines.push(`🏦 Rekening tujuan: ${account}`);
+	lines.push(`💰 Total transfer: ${formatRupiah(payout.amount)}`);
 	if (payout.groups.length > 0) {
 		lines.push('', '📋 Mohon dibagikan ke:');
 		for (const group of payout.groups) {
@@ -295,7 +295,7 @@ export function generateCashPayoutMessage(payout: {
 		}
 	}
 	lines.push('', 'Mohon dicek ya.', 'Terima kasih. Tuhan memberkati.');
-	if (payout.proofUrl) lines.push('', `✅ Bukti transfer: ${payout.proofUrl}`);
+	if (payout.proofUrl) lines.push('', `🧾 Bukti transfer: ${payout.proofUrl}`);
 	return lines.join('\n');
 }
 
