@@ -130,7 +130,7 @@ describe('generateCashPayoutMessage', () => {
 		expect(msg).toContain('✅ Total transfer: Rp 300.000');
 		expect(msg).toContain('- Budi: Rp 100.000');
 		expect(msg).not.toContain('↳ Budi');
-		expect(msg).toContain('- Sari: Rp 200.000\n↳ Sari: Rp 120.000\n↳ Tono: Rp 80.000');
+		expect(msg).toContain('- Sari: Rp 200.000\n       ↳ Sari: Rp 120.000\n       ↳ Tono: Rp 80.000');
 		expect(msg.endsWith('✅ Bukti transfer: https://x/proof')).toBe(true);
 	});
 

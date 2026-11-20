@@ -258,6 +258,8 @@ export function formatDateTime(dateString: string): string {
 	});
 }
 
+const CASH_MEMBER_INDENT = '       ';
+
 /**
  * WhatsApp message to the cash distributor once the batch's cash was sent to
  * them: what arrived, and who to hand it to (one line per hand-over, a family's
@@ -286,7 +288,8 @@ export function generateCashPayoutMessage(payout: {
 			lines.push(`- ${group.receiverName}: ${formatRupiah(group.amount)}`);
 			if (group.members.length > 1) {
 				for (const member of group.members) {
-					lines.push(`↳ ${member.name}: ${formatRupiah(member.amount)}`);
+					// Indented past WhatsApp's "- " bullet, so the members sit under their hand-over.
+					lines.push(`${CASH_MEMBER_INDENT}↳ ${member.name}: ${formatRupiah(member.amount)}`);
 				}
 			}
 		}
