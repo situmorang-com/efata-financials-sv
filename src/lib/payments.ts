@@ -19,7 +19,13 @@ import {
 export type PaymentStatus = 'todo' | 'submitted' | 'done';
 
 /** The person who receives all cash in one transfer and hands it out. Lives in the database, never in code. */
-export type CashDistributor = { name: string; bank_name: string; account_number: string };
+export type CashDistributor = {
+	name: string;
+	bank_name: string;
+	account_number: string;
+	/** Where the receipt is sent once the cash transfer is made; may be empty. */
+	whatsapp?: string;
+};
 
 export type PaymentMember = { itemId: number; name: string; amount: number };
 

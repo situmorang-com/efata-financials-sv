@@ -4,7 +4,9 @@
 	// not entered → entered, awaiting approval → transferred.
 	import { page } from '$app/stores';
 	import type { Batch, BatchItem } from '$lib/types.js';
-	import { formatRupiah } from '$lib/format.js';
+	import { formatRupiah, generateCashPayoutWhatsAppUrl } from '$lib/format.js';
+	import { isPdfFile } from '$lib/pdf-to-image.js';
+	import { prepareProofImage } from '$lib/proof-image.js';
 	import {
 		buildPaymentLines,
 		sumPaymentLines,
@@ -21,7 +23,12 @@
 	import LayoutDashboard from '@lucide/svelte/icons/layout-dashboard';
 	import Layers from '@lucide/svelte/icons/layers';
 	import Banknote from '@lucide/svelte/icons/banknote';
+	import Camera from '@lucide/svelte/icons/camera';
 	import Check from '@lucide/svelte/icons/check';
+	import ImageIcon from '@lucide/svelte/icons/image';
+	import Loader2 from '@lucide/svelte/icons/loader-2';
+	import MessageCircle from '@lucide/svelte/icons/message-circle';
+	import X from '@lucide/svelte/icons/x';
 	import Clock from '@lucide/svelte/icons/clock';
 	import FileText from '@lucide/svelte/icons/file-text';
 	import Pencil from '@lucide/svelte/icons/pencil';
@@ -42,8 +49,12 @@
 	// Lines being saved. Several can be in flight: ticking lines off one after another must not drop a click.
 	let savingKeys = $state<string[]>([]);
 	let editingDistributor = $state(false);
-	let distributorForm = $state<CashDistributor>({ name: '', bank_name: '', account_number: '' });
+	let distributorForm = $state<CashDistributor>({ name: '', bank_name: '', account_number: '', whatsapp: '' });
 	let savingDistributor = $state(false);
+	// The cash payout's "sent" step: pick its receipt (or go on without one), like a row's transfer.
+	let cashPicking = $state(false);
+	let cashUploading = $state('');
+	let cashUploadError = $state('');
 
 	const STATUS_LABEL: Record<PaymentStatus, string> = {
 		todo: 'Belum diinput',
@@ -136,10 +147,71 @@
 		);
 	}
 
+	async function uploadCashProof(event: Event, line: PaymentLine) {
+		const input = event.target as HTMLInputElement;
+		const file = input.files?.[0];
+		input.value = '';
+		if (!file || savingKeys.includes(line.key)) return;
+		const isPdf = isPdfFile(file);
+		cashUploadError = '';
+		cashUploading = isPdf ? 'Mengubah PDF...' : 'Mengompresi...';
+		savingKeys = [...savingKeys, line.key];
+		try {
+			const blob = await prepareProofImage(file);
+			cashUploading = `Mengunggah (${Math.round(blob.size / 1024)}KB)...`;
+			const res = await fetch(`/api/batches/${batchId}/payments/cash-proof`, {
+				method: 'POST',
+				headers: { 'Content-Type': blob.type },
+				body: blob
+			});
+			const payload = await res.json().catch(() => null);
+			if (!res.ok) throw new Error(payload?.error || 'Gagal mengunggah bukti');
+			if (payload?.batch) batch = payload.batch as Batch;
+			cashPicking = false;
+			addToast('Bukti transfer tunai disimpan. Kirim WA ke penyalur.', 'success');
+		} catch (error) {
+			console.error('Failed to upload cash payout proof:', error);
+			cashUploadError = isPdf ? 'PDF tidak bisa dibaca' : 'Gagal mengunggah';
+		} finally {
+			cashUploading = '';
+			savingKeys = savingKeys.filter((key) => key !== line.key);
+		}
+	}
+
+	async function markCashDoneWithoutProof(line: PaymentLine) {
+		cashPicking = false;
+		await setCashDone(line, true);
+	}
+
+	let batchLabel = $derived((batch?.name || 'bulan ini').replace(/^transfer\s+/i, ''));
+
+	function cashProofUrl(absolute: boolean): string {
+		const path = `/api/batches/${batchId}/payments/cash-proof`;
+		// The in-app link changes when the receipt is replaced, so the browser doesn't show a cached one.
+		return absolute ? `${window.location.origin}${path}` : `${path}?v=${encodeURIComponent(batch?.updated_at || '')}`;
+	}
+
+	function sendCashWhatsApp(line: PaymentLine) {
+		if (!cashDistributor?.whatsapp) return;
+		const url = generateCashPayoutWhatsAppUrl(cashDistributor.whatsapp, {
+			distributorName: cashDistributor.name,
+			batchLabel,
+			bankName: cashDistributor.bank_name,
+			accountNumber: cashDistributor.account_number,
+			amount: line.amount,
+			groups: line.cashGroups ?? [],
+			proofUrl: batch?.cash_payout_proof ? cashProofUrl(true) : undefined
+		});
+		window.open(url, '_blank');
+		if (!batch?.cash_payout_notified_at) {
+			void postStatus(line, { cash: true, notified: true }, 'WA ke penyalur ditandai terkirim');
+		}
+	}
+
 	function startEditDistributor() {
 		distributorForm = cashDistributor
 			? { ...cashDistributor }
-			: { name: '', bank_name: '', account_number: '' };
+			: { name: '', bank_name: '', account_number: '', whatsapp: '' };
 		editingDistributor = true;
 	}
 
@@ -183,6 +255,45 @@
 		<span class="text-[10px] uppercase tracking-wider text-white/40 shrink-0">{label}</span>
 		<span class="truncate {mono ? 'font-mono' : ''}">{shown}</span>
 	</button>
+{/snippet}
+
+{#snippet cashProofPicker(line: PaymentLine)}
+	<div class="flex flex-col items-end gap-1.5">
+		<div class="flex items-center gap-1.5">
+			<label
+				class="rounded-full px-3 py-1.5 text-sm text-emerald-50 border border-emerald-400/40 bg-emerald-500/20 hover:bg-emerald-500/35 flex items-center gap-1.5 cursor-pointer"
+			>
+				<Camera class="w-3.5 h-3.5" /> Upload bukti
+				<input
+					type="file"
+					accept="image/*,application/pdf,.pdf"
+					class="hidden"
+					onchange={(event) => uploadCashProof(event, line)}
+				/>
+			</label>
+			<button
+				type="button"
+				onclick={() => { cashPicking = false; }}
+				class="p-1.5 rounded-full text-white/40 hover:text-white/80 hover:bg-white/5"
+				aria-label="Batal"
+			>
+				<X class="w-3.5 h-3.5" />
+			</button>
+		</div>
+		{#if cashUploadError}
+			<span class="text-rose-300 text-xs">{cashUploadError}</span>
+		{/if}
+		{#if line.status !== 'done'}
+			<button
+				type="button"
+				disabled={savingKeys.includes(line.key)}
+				onclick={() => markCashDoneWithoutProof(line)}
+				class="text-white/40 hover:text-white/70 text-xs"
+			>
+				Tandai selesai tanpa bukti →
+			</button>
+		{/if}
+	</div>
 {/snippet}
 
 <div class="p-4 sm:p-6 max-w-5xl mx-auto">
@@ -314,10 +425,10 @@
 								</div>
 
 								{#if isCash && (needsDistributor || editingDistributor)}
-									<form class="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-2" onsubmit={saveDistributor}>
-										<p class="sm:col-span-3 text-amber-100/80 text-xs">
+									<form class="mt-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2" onsubmit={saveDistributor}>
+										<p class="sm:col-span-2 lg:col-span-4 text-amber-100/80 text-xs">
 											Uang tunai dikirim dalam satu transfer ke penyalur, lalu dibagikan ke penerima di bawah.
-											Isi rekening penyalur; disimpan di database, tidak di kode.
+											Isi rekening penyalur dan nomor WA untuk mengirim bukti transfer; disimpan di database, tidak di kode.
 										</p>
 										<input
 											bind:value={distributorForm.name}
@@ -338,7 +449,14 @@
 											placeholder="Nomor rekening"
 											class="glass-input rounded-lg px-3 py-2 text-white text-sm font-mono"
 										/>
-										<div class="sm:col-span-3 flex gap-2">
+										<input
+											bind:value={distributorForm.whatsapp}
+											type="tel"
+											inputmode="tel"
+											placeholder="No. WhatsApp (08...)"
+											class="glass-input rounded-lg px-3 py-2 text-white text-sm font-mono"
+										/>
+										<div class="sm:col-span-2 lg:col-span-4 flex gap-2">
 											<button
 												type="submit"
 												disabled={savingDistributor}
@@ -429,11 +547,17 @@
 											<Clock class="w-3.5 h-3.5" /> Sudah diinput
 										</button>
 									{:else if line.status === 'submitted'}
-										{#if isCash}
+										{#if isCash && cashUploading}
+											<span class="rounded-full px-3 py-1.5 text-sm text-white/60 border border-white/15 flex items-center gap-1.5">
+												<Loader2 class="w-3.5 h-3.5 animate-spin" /> {cashUploading}
+											</span>
+										{:else if isCash && cashPicking}
+											{@render cashProofPicker(line)}
+										{:else if isCash}
 											<button
 												type="button"
 												disabled={savingKeys.includes(line.key)}
-												onclick={() => setCashDone(line, true)}
+												onclick={() => { cashPicking = true; cashUploadError = ''; }}
 												class="glass-button rounded-full px-3 py-1.5 text-sm text-emerald-50 border border-emerald-400/40 bg-emerald-500/20 hover:bg-emerald-500/35 flex items-center gap-1.5"
 											>
 												<Check class="w-3.5 h-3.5" /> Sudah ditransfer
@@ -448,6 +572,54 @@
 											<Undo2 class="w-3 h-3" /> Batalkan
 										</button>
 									{:else if isCash}
+										{#if cashUploading}
+											<span class="rounded-full px-3 py-1.5 text-sm text-white/60 border border-white/15 flex items-center gap-1.5">
+												<Loader2 class="w-3.5 h-3.5 animate-spin" /> {cashUploading}
+											</span>
+										{:else if cashPicking}
+											{@render cashProofPicker(line)}
+										{:else}
+											<div class="flex items-center gap-1.5">
+												{#if batch.cash_payout_proof}
+													<a
+														href={cashProofUrl(false)}
+														target="_blank"
+														rel="noopener"
+														class="rounded-full px-3 py-1.5 text-sm text-emerald-200 border border-emerald-400/30 bg-emerald-500/15 hover:bg-emerald-500/30 flex items-center gap-1.5"
+														title="Lihat bukti transfer"
+													>
+														<ImageIcon class="w-3.5 h-3.5" /> Bukti
+													</a>
+												{:else}
+													<button
+														type="button"
+														disabled={savingKeys.includes(line.key)}
+														onclick={() => { cashPicking = true; cashUploadError = ''; }}
+														class="rounded-full px-3 py-1.5 text-sm text-white/60 border border-white/15 hover:text-white hover:border-white/30 flex items-center gap-1.5"
+														title="Ditandai tanpa bukti: klik untuk upload bukti"
+													>
+														<Camera class="w-3.5 h-3.5" /> Upload bukti
+													</button>
+												{/if}
+												<button
+													type="button"
+													disabled={!cashDistributor?.whatsapp}
+													onclick={() => sendCashWhatsApp(line)}
+													class="rounded-full px-3 py-1.5 text-sm flex items-center gap-1.5 border disabled:opacity-50 disabled:cursor-not-allowed
+														{batch.cash_payout_notified_at
+															? 'bg-cyan-400/30 text-cyan-50 border-cyan-300/70 hover:bg-cyan-400/40'
+															: 'bg-green-500/20 text-green-200 border-green-500/30 hover:bg-green-500/40'}"
+													title={!cashDistributor?.whatsapp
+														? 'Isi nomor WA penyalur dulu (Ubah penyalur)'
+														: batch.cash_payout_notified_at
+															? `Kirim ulang WA ke ${cashDistributor.name}`
+															: `Kirim WA ke ${cashDistributor.name}`}
+												>
+													{#if batch.cash_payout_notified_at}<Check class="w-3.5 h-3.5" />{:else}<MessageCircle class="w-3.5 h-3.5" />{/if}
+													WA
+												</button>
+											</div>
+										{/if}
 										<button
 											type="button"
 											disabled={savingKeys.includes(line.key)}

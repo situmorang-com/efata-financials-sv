@@ -63,6 +63,9 @@ export interface Batch {
   /** The one transfer that carries all cash to the cash distributor: entered in the bank portal / sent. */
   cash_payout_submitted_at?: string | null;
   cash_payout_done_at?: string | null;
+  /** Receipt of that transfer (a file name), and when the distributor was sent it on WhatsApp. */
+  cash_payout_proof?: string | null;
+  cash_payout_notified_at?: string | null;
   created_at: string;
   updated_at: string;
   total_items?: number;

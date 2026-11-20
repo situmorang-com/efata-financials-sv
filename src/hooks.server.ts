@@ -73,9 +73,13 @@ const PUBLIC_PATHS = [
 ];
 /**
  * Read-only routes linked from WhatsApp messages to recipients, who have no
- * account: the transfer proof image for one batch item.
+ * account: the transfer proof image for one batch item, and the receipt of the
+ * cash payout sent to the cash distributor.
  */
-const PUBLIC_GET_PATHS = [/^\/api\/batches\/\d+\/items\/\d+\/proof$/];
+const PUBLIC_GET_PATHS = [
+  /^\/api\/batches\/\d+\/items\/\d+\/proof$/,
+  /^\/api\/batches\/\d+\/payments\/cash-proof$/,
+];
 
 const requireSignIn: Handle = async ({ event, resolve }) => {
   const path = event.url.pathname;

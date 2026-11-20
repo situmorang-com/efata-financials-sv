@@ -4,7 +4,8 @@ import type { RequestHandler } from "./$types.js";
 
 // Marks payments as entered in the bank portal (awaiting approval), or clears
 // the mark. Body: { item_ids: number[], submitted: boolean } for transfers, or
-// { cash: true, submitted?: boolean, done?: boolean } for the cash payout.
+// { cash: true, submitted?: boolean, done?: boolean, notified?: boolean } for
+// the cash payout (its receipt is uploaded to ./cash-proof).
 export const POST: RequestHandler = async ({ params, request }) => {
   try {
     const batchId = Number(params.id);
@@ -14,9 +15,10 @@ export const POST: RequestHandler = async ({ params, request }) => {
     const data = await request.json();
 
     if (data?.cash === true) {
-      const state: { submitted?: boolean; done?: boolean } = {};
+      const state: { submitted?: boolean; done?: boolean; notified?: boolean } = {};
       if (typeof data.submitted === "boolean") state.submitted = data.submitted;
       if (typeof data.done === "boolean") state.done = data.done;
+      if (typeof data.notified === "boolean") state.notified = data.notified;
       // A payout that was sent has also been entered.
       if (state.done === true) state.submitted = true;
       if (!paymentDb.setCashPayout(batchId, state)) {

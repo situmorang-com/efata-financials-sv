@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { generateWhatsAppMessage } from './format';
+import { generateCashPayoutMessage, generateWhatsAppMessage } from './format';
 
 const details = {
 	saturdays_attended: 4,
@@ -100,5 +100,41 @@ describe('generateWhatsAppMessage: zoom', () => {
 	it('adds no zoom line for someone without zoom', () => {
 		const msg = generateWhatsAppMessage('Citra', 100000, details, undefined, { ...account, transfer_to_name: 'Citra' });
 		expect(msg).not.toContain('zoom');
+	});
+});
+
+describe('generateCashPayoutMessage', () => {
+	const payout = {
+		distributorName: 'Rina',
+		batchLabel: 'Oktober 2026',
+		bankName: 'BNI',
+		accountNumber: '9876',
+		amount: 300000,
+		groups: [
+			{ receiverName: 'Budi', amount: 100000, members: [{ name: 'Budi', amount: 100000 }] },
+			{
+				receiverName: 'Sari',
+				amount: 200000,
+				members: [
+					{ name: 'Sari', amount: 120000 },
+					{ name: 'Tono', amount: 80000 }
+				]
+			}
+		]
+	};
+
+	it('lists each hand-over, a family with its members, and the receipt', () => {
+		const msg = generateCashPayoutMessage({ ...payout, proofUrl: 'https://x/proof' });
+		expect(msg).toContain('Halo Rina,');
+		expect(msg).toContain('➡️ Rekening tujuan: BNI 9876');
+		expect(msg).toContain('✅ Total transfer: Rp 300.000');
+		expect(msg).toContain('- Budi: Rp 100.000');
+		expect(msg).not.toContain('↳ Budi');
+		expect(msg).toContain('- Sari: Rp 200.000\n↳ Sari: Rp 120.000\n↳ Tono: Rp 80.000');
+		expect(msg.endsWith('✅ Bukti transfer: https://x/proof')).toBe(true);
+	});
+
+	it('leaves the receipt line out when there is none', () => {
+		expect(generateCashPayoutMessage(payout)).not.toContain('Bukti transfer');
 	});
 });

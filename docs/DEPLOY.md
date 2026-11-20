@@ -40,6 +40,8 @@ Everything requires a Google account on the allowlist in
   and 6-digit PIN (5 wrong tries lock it for 15 minutes)
 - `GET /api/batches/<id>/items/<item>/proof` — transfer proof images linked
   from the WhatsApp messages sent to recipients
+- `GET /api/batches/<id>/payments/cash-proof` — the receipt of a batch's cash
+  payout, linked from the WhatsApp message sent to the cash distributor
 
 ## Data
 
@@ -61,7 +63,7 @@ accounts, WhatsApp numbers), `recipients.xlsx` and `efata.db-shm`/`-wal`; clones
 made before that still carry them, so re-clone instead of pulling.
 
 The same goes for the cash distributor (the person who receives a batch's cash in
-one transfer and hands it out): their name and bank account are typed in on a
+one transfer and hands it out): their name, bank account and WhatsApp number are typed in on a
 batch's **Pembayaran** page and stored in the `app_settings` table, not in code.
 
 ## Rollback

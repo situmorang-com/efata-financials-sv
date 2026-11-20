@@ -7,7 +7,8 @@
 	import Image from '@lucide/svelte/icons/image';
 	import Undo2 from '@lucide/svelte/icons/undo-2';
 	import CheckCheck from '@lucide/svelte/icons/check-check';
-	import { isPdfFile, pdfToImage } from '$lib/pdf-to-image.js';
+	import { isPdfFile } from '$lib/pdf-to-image.js';
+	import { prepareProofImage } from '$lib/proof-image.js';
 
 	let {
 		itemId,
@@ -49,33 +50,6 @@
 		}
 	});
 
-	// Resize to 70% on client, server does AVIF q30 + caps at 1200x1600.
-	async function prepareImage(file: File): Promise<Blob> {
-		return new Promise((resolve, reject) => {
-			const img = new window.Image();
-			const url = URL.createObjectURL(file);
-			img.onload = async () => {
-				URL.revokeObjectURL(url);
-				const w = Math.round(img.width * 0.7);
-				const h = Math.round(img.height * 0.7);
-				const canvas = document.createElement('canvas');
-				canvas.width = w;
-				canvas.height = h;
-				const ctx = canvas.getContext('2d')!;
-				ctx.drawImage(img, 0, 0, w, h);
-				const blob = await new Promise<Blob | null>((res) => {
-					canvas.toBlob(res, 'image/jpeg', 0.85);
-				});
-				resolve(blob && blob.size > 0 ? blob : file);
-			};
-			img.onerror = () => {
-				URL.revokeObjectURL(url);
-				reject(new Error('Failed to load image'));
-			};
-			img.src = url;
-		});
-	}
-
 	async function handleFileSelected(e: Event) {
 		if (disabled) return;
 		const input = e.target as HTMLInputElement;
@@ -88,8 +62,7 @@
 		uploadProgress = isPdf ? 'Mengubah PDF...' : 'Mengompresi...';
 
 		try {
-			// A PDF receipt becomes one trimmed image; photos are shrunk as before.
-			const blob = isPdf ? await pdfToImage(file) : await prepareImage(file);
+			const blob = await prepareProofImage(file);
 			const sizeKB = Math.round(blob.size / 1024);
 			uploadProgress = `Mengunggah (${sizeKB}KB)...`;
 

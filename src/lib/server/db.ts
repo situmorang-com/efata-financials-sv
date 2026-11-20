@@ -885,6 +885,14 @@ if (!columnExists("batches", "cash_payout_submitted_at")) {
 if (!columnExists("batches", "cash_payout_done_at")) {
   db.exec("ALTER TABLE batches ADD COLUMN cash_payout_done_at TEXT");
 }
+// The cash payout's transfer receipt (a file in proofs/) and when the
+// distributor was sent it on WhatsApp.
+if (!columnExists("batches", "cash_payout_proof")) {
+  db.exec("ALTER TABLE batches ADD COLUMN cash_payout_proof TEXT");
+}
+if (!columnExists("batches", "cash_payout_notified_at")) {
+  db.exec("ALTER TABLE batches ADD COLUMN cash_payout_notified_at TEXT");
+}
 // Whose name is on a recipient's bank account when it is neither their own nor
 // another recipient's (e.g. a relative), and what that person is to them.
 if (!columnExists("recipients", "account_holder_name")) {
@@ -5255,10 +5263,13 @@ export const paymentDb = {
     return count;
   },
 
-  /** The transfer that carries the batch's cash to the cash distributor. */
+  /**
+   * The transfer that carries the batch's cash to the cash distributor.
+   * Undoing "sent" also drops its receipt and the WhatsApp mark, like a row.
+   */
   setCashPayout: (
     batchId: number,
-    state: { submitted?: boolean; done?: boolean },
+    state: { submitted?: boolean; done?: boolean; notified?: boolean },
   ): boolean => {
     const now = new Date().toISOString();
     const sets: string[] = [];
@@ -5271,12 +5282,44 @@ export const paymentDb = {
       sets.push("cash_payout_done_at = ?");
       values.push(state.done ? now : null);
     }
+    if (state.done === false) {
+      sets.push("cash_payout_proof = NULL", "cash_payout_notified_at = NULL");
+    } else if (state.notified !== undefined) {
+      sets.push("cash_payout_notified_at = ?");
+      values.push(state.notified ? now : null);
+    }
     if (sets.length === 0) return false;
+    const oldProof = state.done === false ? paymentDb.getCashProof(batchId) : null;
     const result = db
       .prepare(
         `UPDATE batches SET ${sets.join(", ")}, updated_at = ? WHERE id = ?`,
       )
       .run(...values, now, batchId);
+    if (result.changes > 0 && oldProof) deleteProofFile(oldProof);
+    return result.changes > 0;
+  },
+
+  getCashProof: (batchId: number): string | null => {
+    const row = db
+      .prepare("SELECT cash_payout_proof FROM batches WHERE id = ?")
+      .get(batchId) as { cash_payout_proof: string | null } | undefined;
+    return row?.cash_payout_proof ?? null;
+  },
+
+  /** Stores the cash payout's receipt; a receipt means the transfer was sent. */
+  setCashProof: (batchId: number, filename: string): boolean => {
+    const oldProof = paymentDb.getCashProof(batchId);
+    const now = new Date().toISOString();
+    const result = db
+      .prepare(
+        `UPDATE batches SET cash_payout_proof = ?,
+           cash_payout_submitted_at = COALESCE(cash_payout_submitted_at, ?),
+           cash_payout_done_at = COALESCE(cash_payout_done_at, ?),
+           updated_at = ?
+         WHERE id = ?`,
+      )
+      .run(filename, now, now, now, batchId);
+    if (result.changes > 0 && oldProof && oldProof !== filename) deleteProofFile(oldProof);
     return result.changes > 0;
   },
 };

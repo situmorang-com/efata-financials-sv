@@ -257,3 +257,49 @@ export function formatDateTime(dateString: string): string {
 		minute: '2-digit'
 	});
 }
+
+/**
+ * WhatsApp message to the cash distributor once the batch's cash was sent to
+ * them: what arrived, and who to hand it to (one line per hand-over, a family's
+ * members under it), with the receipt.
+ */
+export function generateCashPayoutMessage(payout: {
+	distributorName: string;
+	batchLabel: string;
+	bankName: string;
+	accountNumber: string;
+	amount: number;
+	groups: Array<{ receiverName: string; amount: number; members: Array<{ name: string; amount: number }> }>;
+	proofUrl?: string;
+}): string {
+	const account = `${payout.bankName} ${payout.accountNumber}`.trim();
+	const lines = [
+		`Halo ${payout.distributorName},`,
+		'',
+		`✅ Transfer dana tunai bantuan Tuli EFATA ${payout.batchLabel || 'bulan ini'} sudah dilakukan.`
+	];
+	if (account) lines.push(`➡️ Rekening tujuan: ${account}`);
+	lines.push(`✅ Total transfer: ${formatRupiah(payout.amount)}`);
+	if (payout.groups.length > 0) {
+		lines.push('', '📋 Mohon dibagikan ke:');
+		for (const group of payout.groups) {
+			lines.push(`- ${group.receiverName}: ${formatRupiah(group.amount)}`);
+			if (group.members.length > 1) {
+				for (const member of group.members) {
+					lines.push(`↳ ${member.name}: ${formatRupiah(member.amount)}`);
+				}
+			}
+		}
+	}
+	lines.push('', 'Mohon dicek ya.', 'Terima kasih. Tuhan memberkati.');
+	if (payout.proofUrl) lines.push('', `✅ Bukti transfer: ${payout.proofUrl}`);
+	return lines.join('\n');
+}
+
+export function generateCashPayoutWhatsAppUrl(
+	phone: string,
+	payout: Parameters<typeof generateCashPayoutMessage>[0]
+): string {
+	const text = encodeURIComponent(generateCashPayoutMessage(payout));
+	return `https://api.whatsapp.com/send?phone=${cleanPhoneForWhatsApp(phone)}&text=${text}`;
+}
