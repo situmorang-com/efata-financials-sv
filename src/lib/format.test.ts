@@ -17,7 +17,7 @@ describe('generateWhatsAppMessage: who the account belongs to', () => {
 			account_holder_name: 'Jo Paulina',
 			account_holder_relation: 'Anak'
 		});
-		expect(msg).toContain('➡️ Rekening tujuan: BCA 1234\n➡️ Melalui: Jo Paulina (Anak)\n✅ Total');
+		expect(msg).toContain('🏦 Rekening tujuan: BCA 1234\n🤝 Melalui: Jo Paulina (Anak)\n💰 Total');
 	});
 
 	it('names the recipient it is sent through, without a relationship if none is set', () => {
@@ -25,7 +25,7 @@ describe('generateWhatsAppMessage: who the account belongs to', () => {
 			...account,
 			transfer_to_name: 'Budi'
 		});
-		expect(msg).toContain('➡️ Melalui: Budi\n');
+		expect(msg).toContain('🤝 Melalui: Budi\n');
 	});
 
 	it('adds nothing for the recipient’s own account', () => {
@@ -45,7 +45,7 @@ describe('generateWhatsAppMessage: who the account belongs to', () => {
 			family_member_names: ['Ani', 'Budi'],
 			family_total_transfer: 60000
 		});
-		expect(msg).toContain('➡️ Melalui: Budi (Suami)');
+		expect(msg).toContain('🤝 Melalui: Budi (Suami)');
 	});
 
 	it('also covers the short message without attendance', () => {
@@ -55,7 +55,7 @@ describe('generateWhatsAppMessage: who the account belongs to', () => {
 			account_holder_name: 'Jo Paulina',
 			account_holder_relation: 'Anak'
 		});
-		expect(msg).toContain('➡️ Rekening tujuan: BCA 1234\n➡️ Melalui: Jo Paulina (Anak)');
+		expect(msg).toContain('🏦 Rekening tujuan: BCA 1234\n🤝 Melalui: Jo Paulina (Anak)');
 	});
 });
 
@@ -68,7 +68,7 @@ describe('generateWhatsAppMessage: zoom', () => {
 			undefined,
 			{ ...account, transfer_to_name: 'Anita' }
 		);
-		expect(msg).toContain('- Anita\n↳ 4 sabat\n↳ zoom Rp 50.000\n');
+		expect(msg).toContain('- Anita\n       ↳ 4 sabat\n       ↳ zoom Rp 50.000\n');
 	});
 
 	it('adds the Wednesday evenings when they were recorded', () => {
@@ -94,7 +94,7 @@ describe('generateWhatsAppMessage: zoom', () => {
 				{ name: 'Budi', saturdays_attended: 4 }
 			]
 		});
-		expect(msg).toContain('- Ani\n↳ 4 sabat\n↳ zoom Rp 30.000\n- Budi\n↳ 4 sabat\n');
+		expect(msg).toContain('- Ani\n       ↳ 4 sabat\n       ↳ zoom Rp 30.000\n- Budi\n       ↳ 4 sabat\n');
 	});
 
 	it('adds no zoom line for someone without zoom', () => {

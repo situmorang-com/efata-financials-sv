@@ -3,6 +3,9 @@ export function formatRupiah(amount: number | null | undefined): string {
 	return 'Rp ' + safe.toLocaleString('id-ID');
 }
 
+/** Puts a ↳ line under the "- name" above it: WhatsApp indents "- " lines as a bulleted list. */
+const SUB = '       ↳';
+
 export function cleanPhoneForWhatsApp(phone: string): string {
 	if (!phone) return '';
 	let cleaned = phone.replace(/[\s\-\(\)]/g, '');
@@ -26,7 +29,7 @@ function zoomLine(amount: number, sessions: number): string | null {
 	const parts = ['zoom'];
 	if (pay > 0) parts.push(formatRupiah(pay));
 	if (count > 0) parts.push(`(${count} rabu malam)`);
-	return `↳ ${parts.join(' ')}`;
+	return `${SUB} ${parts.join(' ')}`;
 }
 
 export function generateWhatsAppMessage(
@@ -101,21 +104,21 @@ export function generateWhatsAppMessage(
 		const lines = [
 			`Halo ${payeeName},`,
 			'',
-			`✅ Transfer bantuan Tuli EFATA ${batchLabel} sudah dilakukan.`
+			`💸 Transfer bantuan Tuli EFATA ${batchLabel} sudah dilakukan.`
 		];
 		lines.push('');
-		lines.push('☑️ Transfer keluarga (1 rekening):');
-		lines.push(`➡️ Melalui: ${viaLabel || payeeName}`);
+		lines.push('👨‍👩‍👧 Transfer keluarga (1 rekening):');
+		lines.push(`🤝 Melalui: ${viaLabel || payeeName}`);
 		if (accountLabel) {
-			lines.push(`➡️ Rekening tujuan: ${accountLabel}`);
+			lines.push(`🏦 Rekening tujuan: ${accountLabel}`);
 		}
 		if (otherFamilyMembers.length > 0) {
-			lines.push(`➡️ Anggota lain: ${otherFamilyMembers.join(', ')}`);
+			lines.push(`👥 Anggota lain: ${otherFamilyMembers.join(', ')}`);
 		} else if (familyMembers.length > 1) {
-			lines.push(`➡️ Anggota keluarga: ${familyMembers.join(', ')}`);
+			lines.push(`👥 Anggota keluarga: ${familyMembers.join(', ')}`);
 		}
 		lines.push(
-			`✅ Total transfer ke rekening ini: ${formatRupiah(
+			`💰 Total transfer ke rekening ini: ${formatRupiah(
 				familyTotalTransfer > 0 ? familyTotalTransfer : amount
 			)}`
 		);
@@ -125,13 +128,13 @@ export function generateWhatsAppMessage(
 			for (const member of familyMemberDetails) {
 				lines.push(`- ${member.name}`);
 				if (Number.isFinite(Number(member.saturdays_attended))) {
-					lines.push(`↳ ${Math.max(0, Math.round(Number(member.saturdays_attended) || 0))} sabat`);
+					lines.push(`${SUB} ${Math.max(0, Math.round(Number(member.saturdays_attended) || 0))} sabat`);
 				}
 				const zoom = zoomLine(member.zoom_amount ?? 0, member.zoom_sessions ?? 0);
 				if (zoom) {
 					lines.push(zoom);
 				} else if (member.zoom_label) {
-					lines.push(`↳ ${member.zoom_label}`);
+					lines.push(`${SUB} ${member.zoom_label}`);
 				}
 			}
 		}
@@ -141,7 +144,7 @@ export function generateWhatsAppMessage(
 
 		if (proofUrl) {
 			lines.push('');
-			lines.push(`✅ Bukti transfer: ${proofUrl}`);
+			lines.push(`🧾 Bukti transfer: ${proofUrl}`);
 		}
 
 		return lines.join('\n');
@@ -152,26 +155,26 @@ export function generateWhatsAppMessage(
 		const lines = [
 			`Halo ${name},`,
 			'',
-			`✅ Transfer bantuan Tuli EFATA ${batchLabel} sudah dilakukan.`,
+			`💸 Transfer bantuan Tuli EFATA ${batchLabel} sudah dilakukan.`,
 			'',
-			'☑️ Transfer perorangan:'
+			'👤 Transfer perorangan:'
 		];
 
 		if (accountLabel) {
-			lines.push(`➡️ Rekening tujuan: ${accountLabel}`);
+			lines.push(`🏦 Rekening tujuan: ${accountLabel}`);
 		} else {
-			lines.push('➡️ Rekening tujuan: rekening Anda');
+			lines.push('🏦 Rekening tujuan: rekening Anda');
 		}
 		if (viaLabel) {
-			lines.push(`➡️ Melalui: ${viaLabel}`);
+			lines.push(`🤝 Melalui: ${viaLabel}`);
 		}
-		lines.push(`✅ Total transfer ke rekening ini: ${formatRupiah(amount)}`);
+		lines.push(`💰 Total transfer ke rekening ini: ${formatRupiah(amount)}`);
 
 		lines.push('');
 		lines.push('📋 Kehadiran:');
 		lines.push(`- ${name}`);
 		if (details.saturdays_attended > 0) {
-			lines.push(`↳ ${details.saturdays_attended} sabat`);
+			lines.push(`${SUB} ${details.saturdays_attended} sabat`);
 		}
 		if (details.zoom_type !== 'none') {
 			const zoom = zoomLine(details.zoom_amount, details.wednesdays_attended ?? 0);
@@ -184,21 +187,21 @@ export function generateWhatsAppMessage(
 
 		if (proofUrl) {
 			lines.push('');
-			lines.push(`✅ Bukti transfer: ${proofUrl}`);
+			lines.push(`🧾 Bukti transfer: ${proofUrl}`);
 		}
 
 		return lines.join('\n');
 	}
 	const accountSentence = accountLabel
-		? `➡️ Rekening tujuan: ${accountLabel}`
-		: '➡️ Rekening tujuan: rekening Anda';
-	let msg = `Halo ${name},\n\n✅ Dana Tuli EFATA sebesar *${formatRupiah(amount)}* sudah ditransfer.\n${accountSentence}`;
+		? `🏦 Rekening tujuan: ${accountLabel}`
+		: '🏦 Rekening tujuan: rekening Anda';
+	let msg = `Halo ${name},\n\n💸 Dana Tuli EFATA sebesar *${formatRupiah(amount)}* sudah ditransfer.\n${accountSentence}`;
 	if (viaLabel) {
-		msg += `\n➡️ Melalui: ${viaLabel}`;
+		msg += `\n🤝 Melalui: ${viaLabel}`;
 	}
 	msg += '\nMohon dicek ya.\nTerima kasih. Tuhan memberkati.';
 	if (proofUrl) {
-		msg += `\n\n✅ Bukti transfer: ${proofUrl}`;
+		msg += `\n\n🧾 Bukti transfer: ${proofUrl}`;
 	}
 	return msg;
 }
@@ -258,8 +261,6 @@ export function formatDateTime(dateString: string): string {
 	});
 }
 
-const CASH_MEMBER_INDENT = '       ';
-
 /**
  * WhatsApp message to the cash distributor once the batch's cash was sent to
  * them: what arrived, and who to hand it to (one line per hand-over, a family's
@@ -288,8 +289,7 @@ export function generateCashPayoutMessage(payout: {
 			lines.push(`- ${group.receiverName}: ${formatRupiah(group.amount)}`);
 			if (group.members.length > 1) {
 				for (const member of group.members) {
-					// Indented past WhatsApp's "- " bullet, so the members sit under their hand-over.
-					lines.push(`${CASH_MEMBER_INDENT}↳ ${member.name}: ${formatRupiah(member.amount)}`);
+					lines.push(`${SUB} ${member.name}: ${formatRupiah(member.amount)}`);
 				}
 			}
 		}
